@@ -10,3 +10,6 @@ AGENTS.md
 .development-standards/POLICY.md
 .development-standards/manifest.json
 .superpowers/
+
+# Package CI already validates standards on pushes and pull requests.
+/.github/workflows/development-standards.yml
