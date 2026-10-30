@@ -13,11 +13,13 @@
 ### Build System
 
 - add portable development standards tooling ([90afb2915c3e](https://github.com/maxxab/modkit-events/commit/90afb2915c3e697ca70683f619fc47cd322b1094))
+- verify immutable release artifacts ([b1624505d2b7](https://github.com/maxxab/modkit-events/commit/b1624505d2b7184376e98e0b9553fa6c30282361))
 
 ### CI/CD
 
 - verify package and Redis integration across supported runtimes ([f59bea38aae8](https://github.com/maxxab/modkit-events/commit/f59bea38aae8082d9038fd35196e953fad46c577))
 - pin current v7 checkout and Python setup actions ([d98a979f3f22](https://github.com/maxxab/modkit-events/commit/d98a979f3f228ce9c1cdf82bb9021e6b96fc5fdd))
+- publish tested releases with trusted identity ([d0cbd54c5c9b](https://github.com/maxxab/modkit-events/commit/d0cbd54c5c9b04df96c420ecae9c71cc4ed8e521))
 
 ### Maintenance
 
