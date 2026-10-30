@@ -1,0 +1,7 @@
+{
+  "types": ["feat", "fix", "perf", "security", "refactor", "docs", "test", "build", "ci", "chore", "revert", "style"],
+  "scopes": [],
+  "require_scope": false,
+  "max_subject_length": 100,
+  "changelog": "CHANGELOG.md"
+}
