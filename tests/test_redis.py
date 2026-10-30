@@ -50,16 +50,31 @@ def consuming(store, handler):
     return Consumer(store, dispatcher, scope="workers")
 
 
-async def test_real_claim_race_stale_and_completed(stream):
-    store = RedisClaimStore(stream.client, namespace=stream.namespace, lease_seconds=0.02)
+async def test_real_claim_race_has_one_live_owner(stream):
+    # Exclusivity applies while the lease is live, not across a 20 ms CI deadline.
+    store = RedisClaimStore(stream.client, namespace=stream.namespace, lease_seconds=300)
     results = await asyncio.gather(*(store.claim("g", "id") for _ in range(10)))
-    acquired = [result for result in results if result.state == "acquired"]
-    assert len(acquired) == 1
-    await asyncio.sleep(0.03)
+    assert await stream.client.pttl(store._key("g", "id")) > 0
+    assert sum(result.state == "acquired" for result in results) == 1
+    assert sum(result.state == "inflight" for result in results) == 9
+
+
+async def test_real_expired_claim_rejects_stale_owner_and_completes(stream):
+    store = RedisClaimStore(stream.client, namespace=stream.namespace, lease_seconds=300)
+    first = await store.claim("g", "id")
+    assert first.state == "acquired"
+    assert first.claim is not None
+    key = store._key("g", "id")
+    assert await stream.client.pttl(key) > 0
+    # Expire only this test-owned key, synchronously on Redis, without a sleep.
+    assert await stream.client.pexpire(key, 0)
+    assert await stream.client.exists(key) == 0
     new = await store.claim("g", "id")
     assert new.state == "acquired"
-    assert not await store.complete(acquired[0].claim)
-    assert not await store.release(acquired[0].claim)
+    assert new.claim is not None
+    assert new.claim.token != first.claim.token
+    assert not await store.complete(first.claim)
+    assert not await store.release(first.claim)
     assert await store.complete(new.claim)
     assert (await store.claim("g", "id")).state == "completed"
 
