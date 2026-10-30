@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+AGENTS.md
+.cursor/
+.development-standards/POLICY.md
+.development-standards/manifest.json
+.superpowers/
