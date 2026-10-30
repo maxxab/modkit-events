@@ -4,19 +4,18 @@
 
 ### Features
 
-- add generic envelopes dispatch and owned event claims (`d2bde9087505`)
-- add durable sqlite and fenced redis stream adapters (`4d37df3979ce`)
+- implement generic event messaging ([cdf138deb1f8](https://github.com/maxxab/modkit-events/commit/cdf138deb1f84f3e8b4cdb2fc17e1e7f1a974875))
 
-### Bug Fixes
+### Build System
 
-- stop exhausted recovered outbox claims before publish (`6972210c365a`)
-- normalize redis stream responses across protocol modes (`57d1051a44e2`)
-
-### Testing
-
-- verify isolated artifacts and portable integration gates (`19150a7f7fa5`)
-- harden artifact isolation and include reproducible build inputs (`803dcf1beaab`)
+- add portable development standards tooling ([90afb2915c3e](https://github.com/maxxab/modkit-events/commit/90afb2915c3e697ca70683f619fc47cd322b1094))
 
 ### CI/CD
 
-- validate commits and changelog on pushes and pull requests (`c66cdf12d3d8`)
+- verify package and Redis integration across supported runtimes ([f59bea38aae8](https://github.com/maxxab/modkit-events/commit/f59bea38aae8082d9038fd35196e953fad46c577))
+- pin current v7 checkout and Python setup actions ([d98a979f3f22](https://github.com/maxxab/modkit-events/commit/d98a979f3f228ce9c1cdf82bb9021e6b96fc5fdd))
+
+### Maintenance
+
+- ignore local build and environment files ([c820ab5a6097](https://github.com/maxxab/modkit-events/commit/c820ab5a6097c0bbb738b05df09ac23742d4d346))
+- keep duplicate generated workflow local ([fe1779f1c761](https://github.com/maxxab/modkit-events/commit/fe1779f1c76131fb6851fd7769e0188ac3de6a75))
