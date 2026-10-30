@@ -6,6 +6,10 @@
 
 - implement generic event messaging ([cdf138deb1f8](https://github.com/maxxab/modkit-events/commit/cdf138deb1f84f3e8b4cdb2fc17e1e7f1a974875))
 
+### Testing
+
+- separate Redis claim exclusivity from lease expiry ([4d8bd2531165](https://github.com/maxxab/modkit-events/commit/4d8bd253116557ae0a41dd3717a2b2d56c67bee1))
+
 ### Build System
 
 - add portable development standards tooling ([90afb2915c3e](https://github.com/maxxab/modkit-events/commit/90afb2915c3e697ca70683f619fc47cd322b1094))
