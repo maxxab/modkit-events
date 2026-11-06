@@ -5,6 +5,7 @@
 ### Features
 
 - implement generic event messaging ([cdf138deb1f8](https://github.com/maxxab/modkit-events/commit/cdf138deb1f84f3e8b4cdb2fc17e1e7f1a974875))
+- **contracts:** add explicit event and subscription contracts ([59b922a36864](https://github.com/maxxab/modkit-events/commit/59b922a36864f5e23bfed4cd1f687d9b9f611dda))
 
 ### Testing
 
