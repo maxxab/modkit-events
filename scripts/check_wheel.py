@@ -42,7 +42,7 @@ def main():
             def run(*command):
                 subprocess.run([str(python), *command], cwd=temp, env=env, check=True)
 
-            target = str(wheel) + ("[redis,sqlalchemy]" if extras else "")
+            target = str(wheel) + ("[redis,sqlalchemy,pydantic]" if extras else "")
             run(
                 "-m",
                 "pip",
@@ -58,6 +58,7 @@ def main():
                     "test_redis.py",
                     "test_redis_boundaries.py",
                     "test_sqlalchemy.py",
+                    "test_contracts_pydantic.py",
                 }:
                     continue
                 shutil.copy(test, temp / "tests" / test.name)
@@ -70,7 +71,7 @@ def main():
             if not extras:
                 run(
                     "-c",
-                    "import importlib.util; assert all(importlib.util.find_spec(n) is None for n in ('redis','sqlalchemy'))",
+                    "import importlib.util; assert all(importlib.util.find_spec(n) is None for n in ('redis','sqlalchemy','pydantic'))",
                 )
             run("-m", "pip", "check")
             run("sample_app.py")

@@ -13,6 +13,7 @@ license-files = ["LICENSE"]
 classifiers = ["Programming Language :: Python :: 3", "Typing :: Typed"]
 
 [project.optional-dependencies]
+pydantic = ["pydantic>=2.14,<3"]
 redis = ["redis>=8.1,<9"]
 sqlalchemy = ["SQLAlchemy[asyncio]>=2.1.6,<3"]
 
