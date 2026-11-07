@@ -16,6 +16,14 @@ pip install 'modkit-events[redis]'
 pip install 'modkit-events[sqlalchemy]' aiosqlite
 ```
 
+`modkit-events` works independently, with or without `modkit-workers` installed.
+These are separate, generic packages for any application. The dependency is
+one-way: Workers requires Events; Events never requires Workers, including for
+its supported optional adapters, default tests and Events-only migration path.
+The reference application is not a package dependency.
+Cross-package integration tests live in Workers. Unfinished native PostgreSQL
+migrations and adapters remain unqualified.
+
 The base package has no runtime dependencies. Adapters import only when explicitly
 requested. SQLAlchemy currently supports **SQLite 3.35+ only**; other dialects
 are rejected rather than claiming untested locking semantics. Redis requires a
