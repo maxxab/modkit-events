@@ -2,13 +2,14 @@
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import venv
-import zipfile
-from email.parser import Parser
 from pathlib import Path
+
+from release_verify import audit
 
 
 def main():
@@ -18,16 +19,11 @@ def main():
     args = parser.parse_args()
     wheel = args.wheel.resolve()
     root = Path(__file__).resolve().parents[1]
-    with zipfile.ZipFile(wheel) as archive:
-        names = archive.namelist()
-        metadata = next(name for name in names if name.endswith(".dist-info/METADATA"))
-        version = Parser().parsestr(archive.read(metadata).decode())["Version"]
-        assert not any("development-standards" in name or "AGENTS" in name for name in names)
-        for name in names:
-            content = archive.read(name)
-            assert not any(
-                marker in content for marker in (b"/workspace/", b"operations_erp", b"/home/")
-            ), name
+    match = re.fullmatch(r"modkit_events-([0-9]+\.[0-9]+\.[0-9]+)-py3-none-any\.whl", wheel.name)
+    if match is None:
+        raise ValueError("unexpected wheel filename")
+    version = match[1]
+    audit(wheel, "modkit-events", version)
     for extras in (False, True):
         with tempfile.TemporaryDirectory(prefix="modkit-events-wheel-") as directory:
             temp = Path(directory)
