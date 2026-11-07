@@ -149,6 +149,7 @@ tests/test_redis_boundaries.py
 tests/test_resource_lifecycle.py
 tests/test_scope_storage.py
 tests/test_sqlalchemy.py
+tests/test_standalone_package.py
 pyproject.toml
 README.md
 LICENSE

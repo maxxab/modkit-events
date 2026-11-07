@@ -1,4 +1,10 @@
-"""Bounded synchronous foundation controls; run by the inspected trapped runner."""
+"""Pure synchronous foundation contracts, runnable by ordinary Events-only pytest."""
+
+from modkit_events.persistence import bindings as B
+from modkit_events.persistence import errors as E
+from modkit_events.persistence import models as M
+from modkit_events.persistence import observations as O
+from modkit_events.persistence import rows as R
 
 
 def test_codec_surface():
@@ -393,30 +399,6 @@ def test_scan_header_and_scalar_result_guards():
 def _admission_from_work_fields(data):
     identity=M.WorkIdentity(work_id=data['work_id'],kind=M.WorkKind(data['kind']),subscription_id=None if data['subscription_id'] is None else data['subscription_id'].decode(),namespace=data['namespace'].decode(),command_type=data['command_type'].decode(),scope=M.ScopeEvidence(canonical_version=data['canonical_version'],canonical=data['scope_evidence'],application=data['scope_application'],tenant=data['scope_tenant'],owner=data['scope_owner']),idempotency_key=None if data['idempotency_key'] is None else data['idempotency_key'].decode())
     return M.AdmissionInput(identity=identity,schema_version=B.version_from_decimal(data['schema_version_decimal']),semantic_input=data['semantic_input'],replay_input=data['replay_input'],protected_binding=data['protected_binding'],replay_policy=M.ReplayPolicy(data['replay_policy']),max_attempts=data['max_attempts'],deadline=data['deadline'],original_available_at=data['original_available_at'])
-
-
-def test_worker_catalog_factory_and_scan_shared_seam():
-    from modkit_workers.persistence.catalog import get_statement
-    from uuid import UUID
-    data=_work_observation_fields();admission=_admission_from_work_fields(data)
-    data.update(material_state='absent',protected_sidecar=None,protected_reference=None,protected_codec=None,protected_key_version=None,protected_expires_at=None,protected_recovery_metadata=b'',protected_cleanup_policy='retain',projection_metadata=B.canonical_json({}))
-    params=[data[p.name] for p in get_statement('W01').parameters]
-    req=B.freeze_request(get_statement('W01'),params,context=B.ReturnContext(expected=(admission,),readiness=None))
-    assert len(req.parameters)==29 and req.statement is get_statement('W01')
-    wrong=list(params);wrong[-1]=B.canonical_json({'changed':True})
-    rejects(lambda:B.freeze_request(get_statement('W01'),wrong,context=req.context))
-    empty=B.ReturnContext(expected=(),readiness=None)
-    scan=B.freeze_request(get_statement('W05'),[b'jobs',[b'run'],[1],2,30,None,4],context=empty)
-    work={**_work_observation_fields(),'state':'claimed','token':UUID(int=2),'ownership_revision':1,'lease_until':data['created_at']}
-    suffix=(work['work_id'],work['scope_application'],None,None,work['protected_binding'],work['semantic_input'],'absent',None,None,None,None,None,b'','retain',B.canonical_json({}))
-    row=('item',None,None,None)+_work_wire(work)+suffix
-    header=('header',1,work['work_id'],True)+(None,)*71
-    frame=R.split_scan_rows(scan,[header,row])
-    assert frame.visited==1 and len(frame.item_columns)==1 and len(frame.item_columns[0])==71
-    for bad in ([header,row,row],[header,('item',1,None,None)+row[4:]]):
-        try:R.split_scan_rows(scan,bad)
-        except E.PersistenceError as exc:assert exc.code is E.ErrorCode.INVALID_OBSERVATION
-        else:assert False
 
 
 def test_readiness_observation_mismatch_category():
