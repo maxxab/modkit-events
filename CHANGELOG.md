@@ -7,6 +7,10 @@
 - implement generic event messaging ([cdf138deb1f8](https://github.com/maxxab/modkit-events/commit/cdf138deb1f84f3e8b4cdb2fc17e1e7f1a974875))
 - **contracts:** add explicit event and subscription contracts ([59b922a36864](https://github.com/maxxab/modkit-events/commit/59b922a36864f5e23bfed4cd1f687d9b9f611dda))
 
+### Documentation
+
+- clarify one-way Events and Workers dependency ([956f1d74e24e](https://github.com/maxxab/modkit-events/commit/956f1d74e24e3bb179f8d85698f68db7317c64c1))
+
 ### Testing
 
 - separate Redis claim exclusivity from lease expiry ([4d8bd2531165](https://github.com/maxxab/modkit-events/commit/4d8bd253116557ae0a41dd3717a2b2d56c67bee1))
