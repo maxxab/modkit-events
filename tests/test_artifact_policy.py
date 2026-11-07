@@ -749,5 +749,46 @@ class PhysicalArchiveTests(unittest.TestCase):
         )
 
 
+class InstalledWheelHarnessTests(unittest.TestCase):
+    def test_staged_tests_keep_project_metadata_without_checkout_source(self):
+        spec = importlib.util.spec_from_file_location(
+            "check_wheel_staging_test", SCRIPTS / "check_wheel.py"
+        )
+        harness = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(harness)
+        with tempfile.TemporaryDirectory(prefix="modkit-staging-source-") as directory:
+            root = Path(directory)
+            for name in ("tests", "examples", "scripts", "src"):
+                (root / name).mkdir()
+            metadata = (SCRIPTS.parent / "pyproject.toml").read_bytes()
+            (root / "pyproject.toml").write_bytes(metadata)
+            (root / "tests/test_fixture.py").write_text("def test_fixture(): pass\n")
+            (root / "examples/sample_app.py").write_text("pass\n")
+            (root / "scripts/check_installation.py").write_text("pass\n")
+            (root / "src/must_not_be_copied.py").write_text("raise AssertionError\n")
+            wheel = root / "modkit_events-0.1.0-py3-none-any.whl"
+            wheel.write_bytes(b"inert staging fixture")
+            staged_runs = []
+
+            def observe_command(command, *, cwd, env, check):
+                if command[1:3] == ["-m", "pytest"]:
+                    staged = Path(cwd)
+                    self.assertTrue((staged / "pyproject.toml").is_file())
+                    self.assertEqual((staged / "pyproject.toml").read_bytes(), metadata)
+                    self.assertFalse((staged / "src").exists())
+                    self.assertTrue((staged / "tests/test_fixture.py").is_file())
+                    staged_runs.append(staged)
+
+            with (
+                patch.object(harness, "__file__", str(root / "scripts/check_wheel.py")),
+                patch.object(sys, "argv", ["check_wheel.py", str(wheel)]),
+                patch.object(harness, "audit"),
+                patch.object(harness.venv.EnvBuilder, "create"),
+                patch.object(harness.subprocess, "run", side_effect=observe_command),
+            ):
+                harness.main()
+            self.assertEqual(len(staged_runs), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

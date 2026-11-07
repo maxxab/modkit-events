@@ -59,6 +59,7 @@ def main():
                     continue
                 shutil.copy(test, temp / "tests" / test.name)
             shutil.copy(root / "examples/sample_app.py", temp / "sample_app.py")
+            shutil.copy(root / "pyproject.toml", temp / "pyproject.toml")
             (temp / "pytest.ini").write_text(
                 "[pytest]\nasyncio_mode=auto\nasyncio_default_fixture_loop_scope=function\n"
             )
