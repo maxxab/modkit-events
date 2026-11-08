@@ -200,19 +200,55 @@ cross-broker/database transaction and no implicit lease-renewal service.
 
 ## Native PostgreSQL transport status
 
-**Bounded W01/W02, helper and W05 dependency checks passed; full native
-qualification remains incomplete (NOT_READY).** The W01 submission and W02 status
+**Bounded W01/W02/W03 native, helper and W05 dependency checks passed; full
+native qualification remains incomplete (NOT_READY).** The W01 submission and W02 status
 extension has passed independent source review and focused source validation. It uses the existing Events
 controller and the caller's original READ COMMITTED root, with fixed statement
 profiles, bounded request/context retention, and fully validated typed results.
 It adds no second controller or Events dependency on Workers. This does not
-qualify W03-W05 native profiles or a generic native transport.
+qualify W04/W05 native profiles or a generic native transport.
 
 Workers selects the extension through its `prepare_submit` and `prepare_read_job`
 wrappers. Admission, result reservation, execution and release remain explicit.
 `read_result` borrows a still-charged value; the caller must end all borrowed
 references before releasing the result. Successful statement execution is not
 commit acknowledgement.
+
+The W03 complete-page listing extension has passed independent source review
+and bounded native qualification, including its private five-argument SQL
+overload.
+Workers `prepare_list_jobs` defaults `max_page_payload_bytes` to 16 MiB across 14
+large BYTEA occurrences, counting repeated fields separately. Explicit budgets
+from 1 through 3,758,096,384 bytes preserve larger complete pages and limit 1..256.
+The four-argument business request stays unchanged. After admission, use the
+common `result_capacity(ticket, execution_ledger=...)` quote before reservation.
+At the default budget and limit 256, the conservative result charge is 62,052,884
+bytes on the measured Python interpreter, plus request and other controller
+backing; it is not a process-memory limit. Oversized pages fail entirely without
+truncation or retry. Received `PZ013` retains the existing HELD/UNKNOWN recovery
+rules. The private bounded SQL overload must be installed separately; there is
+no fallback to unbounded SQL or automatic installation.
+
+Accepted W03 checks include empty and 256-row full-record pages, non-null
+cursors, exact-budget success and the original late `PZ013` without a returned
+prefix. Catalog and access-control checks passed. A concurrent lawful E04 claim
+preserved the complete historical two-row snapshot; cancellation on the original
+connection preserved `57014`, exception identity and HELD/UNKNOWN without refund.
+Owner-only rollback controls covered projection caps and sentinels, not native
+execution against faulted SQL definitions.
+
+The original W03 run failed when its Docker observer could not start. A separate
+diagnostic reproduced Docker initialization failing under the inherited native
+address-space limit. A corrected remaining-only continuation passed snapshot
+and cancellation checks without replaying successful cases; the original failure
+and missing original stderr remain preserved. Bounded query-plan and complete
+original-window server-log checks passed. This does not qualify a genuine
+resolved lifecycle, direct wire capture, exact total memory/RSS, an SLA or all
+possible sensitive log values.
+
+A separately accepted disposition confirms graceful shutdown and non-force
+removal of the W03 fixture, with container and owned socket directory absence
+verified.
 
 The first real W01/W02 qualification attempt did **not** pass. Initial submission,
 a complete protected-record read and a missing read returned before an identical
@@ -249,7 +285,7 @@ check, containment and input-pin checks passed. These checks do not certify all
 logs. A separate disposition receipt confirms clean shutdown and non-force
 removal of the isolated fixture, with container and owned socket absence verified.
 
-Existing E14/E28 qualification remains separate. Installation, final
+Existing E14/E28 qualification remains separate. Production installation, final
 grants/manifests, installed artifacts, other drivers/platforms, broader native
 and scaling qualification, and release readiness remain unqualified.
 

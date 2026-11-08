@@ -1,4 +1,4 @@
-"""Fixed import-neutral Workers W01/W02 semantic and retained graph profile.
+"""Fixed import-neutral Workers W01/W02/W03 semantic and retained graph profile.
 
 No Workers import, driver, I/O, registration, or arbitrary graph traversal.
 Startup component provenance is cooperative, not authentication of Python code.
@@ -17,6 +17,10 @@ from . import observations as O
 from .errors import _reject_validation as reject
 
 _MAX = 1048576
+# Fourteen distinct large BYTEA output occurrences, not distinct objects.
+_LIST_ROW_PAYLOAD_MAX = 14 * _MAX
+DEFAULT_LIST_PAGE_PAYLOAD_BYTES = 16 * _MAX
+MAX_LIST_PAGE_PAYLOAD_BYTES = 256 * _LIST_ROW_PAYLOAD_MAX
 _MATERIAL = (
     ("material_state", C.WireType.TEXT, False),
     ("protected_sidecar", C.WireType.BYTEA, True),
@@ -56,7 +60,7 @@ def _shape(statement):
         reject()
     if (
         type(statement.parameters) is not tuple
-        or len(statement.parameters) not in (1, 29)
+        or len(statement.parameters) not in (1, 4, 29)
         or type(statement.result) is not C.ResultSpec
         or type(statement.result.columns) is not tuple
         or len(statement.result.columns) not in (2, 71)
@@ -64,7 +68,7 @@ def _shape(statement):
         reject()
     C._validate_statement_spec(statement, _reject=reject)
     C._validate_result_spec(statement.result, _reject=reject)
-    if statement.key not in ("W01", "W02"):
+    if statement.key not in ("W01", "W02", "W03"):
         reject()
     for value in statement.parameters:
         C._validate_parameter_spec(value, _reject=reject)
@@ -80,12 +84,19 @@ def _shape(statement):
         )
         record, cardinality, mutation = C.RecordKind.ADMISSION, C.CardinalityKind.EXACT_ONE, True
     else:
-        params = (("work_id", C.WireType.UUID, False),)
+        params = (
+            (("work_id", C.WireType.UUID, False),)
+            if statement.key == "W02"
+            else tuple((p.name, p.wire_type, p.nullable) for p in C.get_statement("E30").parameters)
+        )
         cols = (
             tuple((c.name, c.wire_type, c.nullable) for c in C.get_statement("E15").result.columns)
             + _JOB
         )
-        record, cardinality, mutation = C.RecordKind.JOB, C.CardinalityKind.OPTIONAL_ONE, False
+        record, mutation = C.RecordKind.JOB, False
+        cardinality = (
+            C.CardinalityKind.OPTIONAL_ONE if statement.key == "W02" else C.CardinalityKind.LIMIT
+        )
     if (
         tuple((p.name, p.wire_type, p.nullable) for p in statement.parameters) != params
         or tuple((c.name, c.wire_type, c.nullable) for c in statement.result.columns) != cols
@@ -144,11 +155,12 @@ def _validate_operation(operation):
         reject()
     _shape(operation.statement)
     submit = operation.statement.key == "W01"
+    listing = operation.statement.key == "W03"
     _carrier(
         operation.request_type,
         "modkit_workers.persistence.models",
-        "JobSubmitRequest" if submit else "JobReadRequest",
-        ("job",) if submit else ("work_id",),
+        "JobSubmitRequest" if submit else "JobListRequest" if listing else "JobReadRequest",
+        ("job",) if submit else ("after", "limit") if listing else ("work_id",),
     )
     if type(operation.result_types) is not tuple or len(operation.result_types) != (
         1 if submit else 3
@@ -165,9 +177,13 @@ def _validate_operation(operation):
     )
     for cls, (name, names) in zip(operation.result_types, result_shapes):
         _carrier(cls, "modkit_workers.persistence.observations", name, names)
-    suffix = "submit" if submit else "read"
+    suffix = "submit" if submit else "list" if listing else "read"
     callbacks = (
-        (operation.build_request, "bindings", "_submit_raw" if submit else "_read_job_raw"),
+        (
+            operation.build_request,
+            "bindings",
+            "_submit_raw" if submit else "_list_jobs_raw" if listing else "_read_job_raw",
+        ),
         (operation.decode_rows, "rows", "_decode_" + suffix + "_raw"),
         (operation.validate_result, "rows", "_validate_" + suffix + "_result_raw"),
     )
@@ -234,9 +250,14 @@ def _parameters(statement, parameters, context):
     for value, spec in zip(parameters, statement.parameters):
         if _scalar(value, spec.wire_type, spec.nullable, spec.name) is not value:
             reject()
-    if statement.key == "W02":
+    if statement.key in ("W02", "W03"):
         if context.expected:
             reject()
+        if statement.key == "W03":
+            namespace, created_at, work_id, limit = parameters
+            if namespace != b"jobs" or (created_at is None) != (work_id is None):
+                reject()
+            B._integer_raw(limit, 1, 256)
         return
     if len(context.expected) != 1:
         reject()
@@ -312,9 +333,31 @@ def _storage(value):
     reject()
 
 
-def _request_size(request, operation):
+def _validate_max_page_payload_bytes(value, /):
+    """Return the same exact bounded budget integer, without a default."""
+    return B._integer_raw(value, 1, MAX_LIST_PAGE_PAYLOAD_BYTES)
+
+
+def _validate_operation_budget(operation, value):
+    if operation.statement.key == "W03":
+        return _validate_max_page_payload_bytes(value)
+    if value is not None:
+        reject()
+    return None
+
+
+def _budget_metadata_growth():
+    # Mirror the existing seven-key A record and its one W03-only insertion.
+    metadata = dict.fromkeys(("token", "capacity", "data", "borrows", "x", "builder", "profile"))
+    before = getsizeof(metadata)
+    metadata["max_page_payload_bytes"] = None
+    return max(0, getsizeof(metadata) - before)
+
+
+def _request_size(request, operation, *, max_page_payload_bytes=None):
     _validate_operation(operation)
     validate_request(request, operation.statement)
+    _validate_operation_budget(operation, max_page_payload_bytes)
     size = (
         getsizeof(request)
         + getsizeof(request.parameters)
@@ -357,12 +400,15 @@ def _request_size(request, operation):
             _storage(getattr(scope, n))
             for n in ("canonical_version", "canonical", "application", "tenant", "owner")
         )
+    if operation.statement.key == "W03":
+        size += getsizeof(max_page_payload_bytes) + _budget_metadata_growth()
     return size
 
 
-def _result_size(request, value, operation):
+def _result_size(request, value, operation, *, max_page_payload_bytes=None):
     _validate_operation(operation)
     validate_request(request, operation.statement)
+    _validate_operation_budget(operation, max_page_payload_bytes)
     if operation.statement.key == "W01":
         if (
             type(value) is not operation.result_types[0]
@@ -372,72 +418,117 @@ def _result_size(request, value, operation):
         ):
             reject()
         size = getsizeof(value) + _storage(value.work_id) + _storage(value.inserted)
+    elif operation.statement.key == "W03":
+        if type(value) is not tuple or len(value) > request.parameters[3]:
+            reject()
+        size = getsizeof(value)
+        payload_bytes = 0
+        for record in value:
+            size += _job_result_size(record, operation)
+            # The fixed graph preflight above rejects hooks before len().
+            payload_bytes += _job_payload_size(record)
+            if payload_bytes > max_page_payload_bytes:
+                reject()
     elif value is None:
         size = getsizeof(None)
     else:
-        if (
-            type(value) is not operation.result_types[0]
-            or type(value.work) is not O.WorkObservation
-            or type(value.details) is not operation.result_types[1]
-            or type(value.payload) is not operation.result_types[2]
-        ):
+        size = _job_result_size(value, operation)
+    operation.validate_result(request, value)
+    return size
+
+
+def _job_payload_size(record):
+    """Fourteen finite output occurrences; equal/shared bytes count again."""
+    work, details, payload = record.work, record.details, record.payload
+    size = sum(
+        len(value) if value is not None else 0
+        for value in (
+            work.intent_evidence,
+            work.semantic_input,
+            work.replay_input,
+            work.protected_binding,
+            work.result,
+            details.protected_binding,
+            payload.semantic_input,
+            payload.sidecar,
+            payload.reference,
+            payload.recovery_metadata,
+            payload.projection_metadata,
+        )
+    )
+    if work.resolution is not None:
+        resolution = work.resolution
+        size += sum(
+            len(value) if value is not None else 0
+            for value in (resolution.result, resolution.evidence, resolution.binding)
+        )
+    return size
+
+
+def _job_result_size(value, operation):
+    """Preflight and measure one fixed graph, with no page-sized scratch."""
+    if (
+        type(value) is not operation.result_types[0]
+        or type(value.work) is not O.WorkObservation
+        or type(value.details) is not operation.result_types[1]
+        or type(value.payload) is not operation.result_types[2]
+    ):
+        reject()
+    work, details, payload = value.work, value.details, value.payload
+    # Preflight full graph scalar fields before semantic helpers/getsizeof.
+    columns = C.get_statement("E15").result.columns
+    scalars = []
+    for col in columns[:39]:
+        scalar = getattr(work, col.name)
+        _scalar(scalar, col.wire_type, col.nullable, col.name)
+        scalars.append(scalar)
+    resolution = work.resolution
+    if resolution is not None:
+        if type(resolution) is not O.ResolutionObservation:
             reject()
-        work, details, payload = value.work, value.details, value.payload
-        # Preflight full graph scalar fields before semantic helpers/getsizeof.
-        columns = C.get_statement("E15").result.columns
-        scalars = []
-        for col in columns[:39]:
-            scalar = getattr(work, col.name)
+        for col in columns[40:]:
+            name = col.name[len("resolution_record_") :]
+            scalar = getattr(resolution, name)
             _scalar(scalar, col.wire_type, col.nullable, col.name)
             scalars.append(scalar)
-        resolution = work.resolution
-        if resolution is not None:
-            if type(resolution) is not O.ResolutionObservation:
+    for name in _DETAILS:
+        scalar = getattr(details, name)
+        if name == "protected_binding":
+            B._bytes_raw(scalar)
+        elif scalar is None and name in ("tenant", "owner"):
+            pass
+        elif name == "work_id":
+            if type(scalar) is not str or len(scalar) != 36:
                 reject()
-            for col in columns[40:]:
-                name = col.name[len("resolution_record_") :]
-                scalar = getattr(resolution, name)
-                _scalar(scalar, col.wire_type, col.nullable, col.name)
-                scalars.append(scalar)
-        for name in _DETAILS:
-            scalar = getattr(details, name)
-            if name == "protected_binding":
-                B._bytes_raw(scalar)
-            elif scalar is None and name in ("tenant", "owner"):
-                pass
-            elif name == "work_id":
-                if type(scalar) is not str or len(scalar) != 36:
-                    reject()
-            else:
-                B._identifier_raw(scalar)
-            scalars.append(scalar)
-        for name in _PAYLOAD:
-            scalar = getattr(payload, name)
-            if name == "material_state":
-                if type(scalar) is not M.MaterialState:
-                    reject()
-            elif name == "cleanup_policy":
-                if type(scalar) is not M.CleanupPolicy:
-                    reject()
-            elif scalar is None and name in (
-                "sidecar",
-                "reference",
-                "codec",
-                "key_version",
-                "expires_at",
-            ):
-                pass
-            elif name in ("codec", "key_version"):
-                B._identifier_raw(scalar)
-            elif name == "expires_at":
-                B._instant_raw(scalar)
-            else:
-                B._bytes_raw(scalar)
-            scalars.append(scalar)
-        size = sum(getsizeof(v) for v in (value, work, details, payload))
-        size += getsizeof(resolution) + sum(_storage(v) for v in scalars)
-        O._validate_work_observation_raw(work)
-    operation.validate_result(request, value)
+        else:
+            B._identifier_raw(scalar)
+        scalars.append(scalar)
+    for name in _PAYLOAD:
+        scalar = getattr(payload, name)
+        if name == "material_state":
+            if type(scalar) is not M.MaterialState:
+                reject()
+        elif name == "cleanup_policy":
+            if type(scalar) is not M.CleanupPolicy:
+                reject()
+        elif scalar is None and name in (
+            "sidecar",
+            "reference",
+            "codec",
+            "key_version",
+            "expires_at",
+        ):
+            pass
+        elif name in ("codec", "key_version"):
+            B._identifier_raw(scalar)
+        elif name == "expires_at":
+            B._instant_raw(scalar)
+        else:
+            B._bytes_raw(scalar)
+        scalars.append(scalar)
+    size = sum(getsizeof(v) for v in (value, work, details, payload))
+    size += getsizeof(resolution) + sum(_storage(v) for v in scalars)
+    O._validate_work_observation_raw(work)
     return size
 
 
@@ -467,8 +558,9 @@ def _carrier_upper(cls):
     return getsizeof(object.__new__(cls))
 
 
-def _preparation_capacity(operation):
+def _preparation_capacity(operation, *, max_page_payload_bytes=None):
     _validate_operation(operation)
+    _validate_operation_budget(operation, max_page_payload_bytes)
     size = (
         _carrier_upper(B.FrozenRequest)
         + getsizeof((None,) * len(operation.statement.parameters))
@@ -495,17 +587,77 @@ def _preparation_capacity(operation):
             + _upper(C.WireType.BYTEA, 781)
             + 3 * _upper(C.WireType.BYTEA, 256)
         )
+    if operation.statement.key == "W03":
+        size += getsizeof(MAX_LIST_PAGE_PAYLOAD_BYTES) + _budget_metadata_growth()
     return size
 
 
-def result_capacity(operation: WorkersNativeOperation, /) -> int:
+def result_capacity(
+    operation: WorkersNativeOperation, /, *, request=None, max_page_payload_bytes=None
+) -> int:
     _validate_operation(operation)
+    _validate_operation_budget(operation, max_page_payload_bytes)
     if operation.statement.key == "W01":
         return (
             _carrier_upper(operation.result_types[0])
             + _upper(C.WireType.TEXT, 36)
             + _upper(C.WireType.BOOL)
         )
+    if operation.statement.key == "W02":
+        return _job_result_capacity(operation)
+    n = _result_row_limit(request, operation)
+    # Exact preallocated page lists coexist with their one tuple conversion.
+    page_containers = getsizeof((None,) * n) + getsizeof([None] * n)
+    final_page = (
+        page_containers
+        + n * (_job_result_capacity(operation) - _LIST_ROW_PAYLOAD_MAX)
+        + min(n * _LIST_ROW_PAYLOAD_MAX, max_page_payload_bytes)
+    )
+    columns = operation.statement.result.columns
+    canonical_row = getsizeof((None,) * len(columns)) + _column_upper(columns)
+    canonical_page = (
+        page_containers
+        + n * (canonical_row - _LIST_ROW_PAYLOAD_MAX)
+        + min(n * _LIST_ROW_PAYLOAD_MAX, max_page_payload_bytes)
+    )
+    transport_row = getsizeof((None,) * (len(columns) + 1)) + getsizeof(b"") + 1
+    for column in columns:
+        cell = _binary_upper(column)
+        transport_row += max(getsizeof(None), cell) if column.nullable else cell
+    sentinel_backing = (
+        getsizeof((None,) * (n + 1))
+        + (n + 1) * (transport_row - _LIST_ROW_PAYLOAD_MAX)
+        + min((n + 1) * _LIST_ROW_PAYLOAD_MAX, max_page_payload_bytes)
+    )
+    return final_page + canonical_page + sentinel_backing
+
+
+def _result_row_limit(request, operation, /):
+    """Use the retained validated request, never an independent caller count."""
+    _validate_operation(operation)
+    validate_request(request, operation.statement)
+    return request.parameters[3] if operation.statement.key == "W03" else 1
+
+
+def _binary_upper(column):
+    wire = column.wire_type
+    if wire is C.WireType.BYTEA:
+        width = _cap(column.name, wire)
+    elif wire is C.WireType.TEXT:
+        width = 4 * _cap(column.name, wire)
+    elif wire is C.WireType.BOOL:
+        width = 1
+    elif wire is C.WireType.INT4:
+        width = 4
+    elif wire is C.WireType.UUID:
+        width = 16
+    else:  # INT8, XID8 and TIMESTAMPTZ have fixed eight-byte binary values.
+        width = 8
+    return getsizeof(b"") + width
+
+
+def _job_result_capacity(operation):
+    # R: unchanged W02 finite JobRecord graph upper bound.
     size = sum(_carrier_upper(cls) for cls in operation.result_types)
     size += _carrier_upper(O.WorkObservation) + _carrier_upper(O.ResolutionObservation)
     size += _column_upper(C.get_statement("E15").result.columns[:39]) + _column_upper(

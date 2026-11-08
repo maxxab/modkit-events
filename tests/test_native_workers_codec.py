@@ -1,14 +1,16 @@
-"""Fixed W01/W02 source-only binary contract; never imports a real driver."""
+"""Fixed W01/W02/W03 source-only binary contract; never imports a real driver."""
 
 from test_managed_lifecycle import _run
 from test_native_workers_profile import _WORKERS, workers_companion
 
 _PROFILE = r"""
-from modkit_events.persistence import native_profile as P, native_codec as N, catalog as C
+from modkit_events.persistence import native_profile as P, native_codec as N, catalog as C, models as M
 from modkit_events.persistence.errors import _ValidationReject
 from uuid import UUID
 from dataclasses import replace
 def profile(key):
+    if key=='W03':
+        return P.WorkersNativeOperation(statement=WC.get_statement(key),request_type=WM.JobListRequest,build_request=WB._list_jobs_raw,decode_rows=WR._decode_list_raw,validate_result=WR._validate_list_result_raw,result_types=(WO.JobRecord,WO.JobDetails,WO.JobPayload))
     submit=key=='W01'
     return P.WorkersNativeOperation(statement=WC.get_statement(key),request_type=WM.JobSubmitRequest if submit else WM.JobReadRequest,build_request=WB._submit_raw if submit else WB._read_job_raw,decode_rows=WR._decode_submit_raw if submit else WR._decode_read_raw,validate_result=WR._validate_submit_result_raw if submit else WR._validate_read_result_raw,result_types=(WO.JobAdmissionObservation,) if submit else (WO.JobRecord,WO.JobDetails,WO.JobPayload))
 def rejected(fn):
@@ -178,6 +180,136 @@ def forbidden(*args,**kwargs): raise AssertionError('converted before full row p
 N.UUID=forbidden
 row[-1]=b'x'*1048577
 rejected(lambda:N._decode_binary_transport_row(spec,tuple(row),op))
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_retained_request_keyword_preserves_w02_descriptor_and_decode():
+    """Breaks if the issuer cannot forward its retained request through both leaves."""
+    _run(
+        _WORKERS
+        + _PROFILE
+        + r"""
+op=profile('W02');request=op.build_request(WM.JobReadRequest(work_id=str(UUID(int=1))))
+assert N._selected_sql_descriptor(op.statement,op,request=request)==N._selected_sql_descriptor(op.statement,op)
+row=[b'\x01']
+for col in N._selected_sql_descriptor(op.statement,op).transport_columns[1:]:
+    row.append(None if col.nullable else (b'x' if col.wire_type is C.WireType.BYTEA else (1).to_bytes(col.max_payload_bytes,'big')))
+assert N._decode_binary_transport_row(op.statement,tuple(row),op,request=request)==N._decode_binary_transport_row(op.statement,tuple(row),op)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_w03_fixed_five_parameter_plan_binds_sentinel_to_validated_request():
+    """Breaks on limit rewriting, unordered SQL, missing request or lost job caps."""
+    _run(
+        _WORKERS
+        + _PROFILE
+        + r"""
+from datetime import datetime, timezone
+op=profile('W03');spec=op.statement
+point=profile('W02');point_plan=N._selected_sql_descriptor(point.statement,point)
+instant=datetime(2026,1,1,tzinfo=timezone.utc);identity=UUID(int=7)
+after=M.WorkCursor(created_at=instant,work_id=identity)
+for limit in (1,2,256):
+    request=op.build_request(WM.JobListRequest(after=after,limit=limit))
+    parameters=request.parameters
+    plan=N._selected_sql_descriptor(spec,op,request=request,max_page_payload_bytes=16777216)
+    assert plan.parameter_casts==('pg_catalog.bytea','pg_catalog.timestamptz','pg_catalog.uuid','pg_catalog.int4','pg_catalog.int8')
+    assert plan.cardinality is C.CardinalityKind.LIMIT and plan.sentinel_limit==limit+1
+    assert plan.canonical_columns is spec.result.columns
+    assert plan.transport_columns is point_plan.transport_columns
+    assert plan.max_admitted_cell_payload_bytes==14688732
+    assert b'FROM modkit_workers.w03($1::pg_catalog.bytea, $2::pg_catalog.timestamptz, $3::pg_catalog.uuid, $4::pg_catalog.int4, $5::pg_catalog.int8) AS s' in plan.sql
+    assert plan.sql.endswith(b'ORDER BY c.created_at, c.work_id\nLIMIT ($4::pg_catalog.int4 + 1)')
+    assert b'w02(' not in plan.sql and b'w03($1' in plan.sql
+    assert parameters is request.parameters and parameters==(b'jobs',instant,identity,limit)
+    assert parameters[1] is instant and parameters[2] is identity
+    assert plan.sql.split(b'\nSELECT c.cap_ok,',1)[1].split(b'\nORDER BY',1)[0]==point_plan.sql.split(b'\nSELECT c.cap_ok,',1)[1].rsplit(b'\nLIMIT',1)[0]
+rejected(lambda:N._selected_sql_descriptor(spec,op))
+rejected(lambda:N._selected_sql_descriptor(spec,op,request=object(),max_page_payload_bytes=16777216))
+rejected(lambda:N._selected_sql_descriptor(spec,op,request=point.build_request(WM.JobReadRequest(work_id=str(identity))),max_page_payload_bytes=16777216))
+request=op.build_request(WM.JobListRequest(after=None,limit=1))
+object.__setattr__(request,'parameters',(b'jobs',None,None,0))
+rejected(lambda:N._selected_sql_descriptor(spec,op,request=request,max_page_payload_bytes=16777216))
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_w03_binary_row_requires_request_and_retains_complete_w02_wire_contract():
+    """Breaks if listing bypasses request validation or diverges from protected decoding."""
+    _run(
+        _WORKERS
+        + _PROFILE
+        + r"""
+op=profile('W03');point=profile('W02')
+request=op.build_request(WM.JobListRequest(after=None,limit=2))
+plan=N._selected_sql_descriptor(op.statement,op,request=request,max_page_payload_bytes=16777216)
+row=[b'\x01']
+for col in plan.transport_columns[1:]:
+    row.append(None if col.nullable else (b'x' if col.wire_type is C.WireType.BYTEA else (1).to_bytes(col.max_payload_bytes,'big')))
+wire=tuple(row)
+expected=N._decode_binary_transport_row(point.statement,wire,point)
+assert N._decode_binary_transport_row(op.statement,wire,op,request=request,max_page_payload_bytes=16777216)==expected
+rejected(lambda:N._decode_binary_transport_row(op.statement,wire,op))
+rejected(lambda:N._decode_binary_transport_row(op.statement,wire,op,request=object(),max_page_payload_bytes=16777216))
+row[-1]=b'x'*1048577
+def forbidden(*args,**kwargs):raise AssertionError('typed conversion before suffix preflight')
+N.UUID=forbidden
+rejected(lambda:N._decode_binary_transport_row(op.statement,tuple(row),op,request=request,max_page_payload_bytes=16777216))
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+def test_w03_sql_bounds_source_before_whole_page_fourteen_field_aggregate():
+    """Breaks on unbounded four-arg source, prefix budgeting, or omitted occurrences."""
+    _run(r"""
+import re
+from modkit_events.persistence import native_codec as N
+sql=N._W03_SQL
+source,checked=sql.split(b'), checked AS (',1)
+assert b'FROM modkit_workers.w03($1::pg_catalog.bytea, $2::pg_catalog.timestamptz, $3::pg_catalog.uuid, $4::pg_catalog.int4, $5::pg_catalog.int8) AS s' in source
+assert source.endswith(b'LIMIT ($4::pg_catalog.int4 + 1)\n')
+assert sql.count(b'LIMIT ($4::pg_catalog.int4 + 1)')==2
+guard,projection=checked.split(b'\nSELECT c.cap_ok,',1)
+assert b'pg_catalog.sum(' in guard
+assert b') OVER () OPERATOR(pg_catalog.<=) $5::pg_catalog.int8::pg_catalog.numeric' in guard
+expected=('intent_evidence','semantic_input','replay_input','protected_binding','result','resolution_record_result','resolution_record_evidence','resolution_record_binding','job_protected_binding','job_semantic_input','protected_sidecar','protected_reference','protected_recovery_metadata','projection_metadata')
+operands=tuple(name.decode() for name in re.findall(rb'COALESCE\(pg_catalog.octet_length\(s\.([a-z_]+)\)::pg_catalog.int8, 0::pg_catalog.int8\)',guard))
+assert operands==expected
+assert b' IS TRUE AS cap_ok' in guard and b'FROM source AS s' in guard
+assert b'page_budget_ok' not in sql and b'pg_catalog.numeric' not in projection
+assert projection.split(b'\nORDER BY',1)[0]==N._W02_SQL.split(b'\nSELECT c.cap_ok,',1)[1].rsplit(b'\nLIMIT',1)[0]
+assert sql.endswith(b'ORDER BY c.created_at, c.work_id\nLIMIT ($4::pg_catalog.int4 + 1)')
+print('MANAGED_BODY_COMPLETE')
+""")
+
+
+@workers_companion
+def test_w03_descriptor_rejects_invalid_budget_and_keeps_sql_fixed_above_int4():
+    """Breaks if Q is defaulted/coerced, narrowed, or accepted on another profile."""
+    _run(
+        _WORKERS
+        + _PROFILE
+        + r"""
+op=profile('W03');request=op.build_request(WM.JobListRequest(after=None,limit=256))
+class Integer(int):pass
+for bad in (None,True,False,Integer(1),0,-1,3758096385,1.0,'1'):
+    rejected(lambda:N._selected_sql_descriptor(op.statement,op,request=request,max_page_payload_bytes=bad))
+for budget in (1,16777216,2**31,3758096384):
+    plan=N._selected_sql_descriptor(op.statement,op,request=request,max_page_payload_bytes=budget)
+    assert plan.sql is N._W03_SQL and plan.sentinel_limit==257
+    assert plan.parameter_casts[-1]=='pg_catalog.int8' and len(plan.transport_columns)==72
+point=profile('W02')
+rejected(lambda:N._selected_sql_descriptor(point.statement,point,max_page_payload_bytes=1))
+rejected(lambda:N._selected_sql_descriptor(C.get_statement('E14'),max_page_payload_bytes=1))
 print('MANAGED_BODY_COMPLETE')
 """
     )

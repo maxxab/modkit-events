@@ -1,4 +1,4 @@
-"""Pure fixed SQL plans for the fixed E14/E28 and W01/W02 native transport.
+"""Pure fixed SQL plans for the fixed E14/E28 and W01/W02/W03 native transport.
 
 No driver, I/O, readiness or execution authority is provided here. Physical
 capacity, bootstrap, lifecycle and actual SQL/driver qualification remain gates.
@@ -181,12 +181,8 @@ _E28 = _SqlDescriptor(
 _W01_SQL = b"""SELECT TRUE::pg_catalog.bool AS cap_ok, s.work_id, s.inserted
 FROM modkit_workers.w01($1::pg_catalog.uuid, $2::pg_catalog.text, $3::pg_catalog.bytea, $4::pg_catalog.bytea, $5::pg_catalog.bytea, $6::pg_catalog.bytea, $7::pg_catalog.bytea, $8::pg_catalog.int4, $9::pg_catalog.bytea, $10::pg_catalog.bytea, $11::pg_catalog.bytea, $12::pg_catalog.bytea, $13::pg_catalog.bytea, $14::pg_catalog.bytea, $15::pg_catalog.bytea, $16::pg_catalog.bytea, $17::pg_catalog.text, $18::pg_catalog.int4, $19::pg_catalog.timestamptz, $20::pg_catalog.timestamptz, $21::pg_catalog.text, $22::pg_catalog.bytea, $23::pg_catalog.bytea, $24::pg_catalog.bytea, $25::pg_catalog.bytea, $26::pg_catalog.timestamptz, $27::pg_catalog.bytea, $28::pg_catalog.text, $29::pg_catalog.bytea) AS s
 LIMIT 2"""
-_W02_SQL = b"""WITH source AS MATERIALIZED (
-    SELECT s.work_id, s.kind, s.subscription_id, s.namespace, s.command_type, s.schema_version_decimal, s.runnable_version, s.canonical_version, s.scope_evidence, s.scope_application, s.scope_tenant, s.scope_owner, s.idempotency_key, s.intent_evidence, s.semantic_input, s.replay_input, s.protected_binding, s.replay_policy, s.max_attempts, s.deadline, s.original_available_at, s.state, s.cancellation_requested, s.token, s.ownership_revision, s.lease_until, s.available_at, s.cycle, s.attempt_count, s.dispatch_id, s.result, s.created_at, s.updated_at, s.success_origin, s.completion_guard_id, s.final_fence_at, s.completion_result_digest, s.resolution_operation_id, s.terminal_resolution_operation_id, s.resolution_present, s.resolution_record_operation_id, s.resolution_record_operation_kind, s.resolution_record_work_id, s.resolution_record_expected_revision, s.resolution_record_cycle, s.resolution_record_attempt, s.resolution_record_dispatch_id, s.resolution_record_outcome, s.resolution_record_retry_at, s.resolution_record_result, s.resolution_record_result_digest, s.resolution_record_reason, s.resolution_record_evidence, s.resolution_record_binding, s.resolution_record_resolution_root_xid, s.resolution_record_recorded_at, s.job_work_id, s.job_application, s.job_tenant, s.job_owner, s.job_protected_binding, s.job_semantic_input, s.material_state, s.protected_sidecar, s.protected_reference, s.protected_codec, s.protected_key_version, s.protected_expires_at, s.protected_recovery_metadata, s.protected_cleanup_policy, s.projection_metadata
-    FROM modkit_workers.w02($1::pg_catalog.uuid) AS s
-), checked AS (
-    SELECT s.*, (
-        (s.kind IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.kind, 'UTF8')) OPERATOR(pg_catalog.<=) 3)
+_JOB_SOURCE_PROJECTION = b"""    SELECT s.work_id, s.kind, s.subscription_id, s.namespace, s.command_type, s.schema_version_decimal, s.runnable_version, s.canonical_version, s.scope_evidence, s.scope_application, s.scope_tenant, s.scope_owner, s.idempotency_key, s.intent_evidence, s.semantic_input, s.replay_input, s.protected_binding, s.replay_policy, s.max_attempts, s.deadline, s.original_available_at, s.state, s.cancellation_requested, s.token, s.ownership_revision, s.lease_until, s.available_at, s.cycle, s.attempt_count, s.dispatch_id, s.result, s.created_at, s.updated_at, s.success_origin, s.completion_guard_id, s.final_fence_at, s.completion_result_digest, s.resolution_operation_id, s.terminal_resolution_operation_id, s.resolution_present, s.resolution_record_operation_id, s.resolution_record_operation_kind, s.resolution_record_work_id, s.resolution_record_expected_revision, s.resolution_record_cycle, s.resolution_record_attempt, s.resolution_record_dispatch_id, s.resolution_record_outcome, s.resolution_record_retry_at, s.resolution_record_result, s.resolution_record_result_digest, s.resolution_record_reason, s.resolution_record_evidence, s.resolution_record_binding, s.resolution_record_resolution_root_xid, s.resolution_record_recorded_at, s.job_work_id, s.job_application, s.job_tenant, s.job_owner, s.job_protected_binding, s.job_semantic_input, s.material_state, s.protected_sidecar, s.protected_reference, s.protected_codec, s.protected_key_version, s.protected_expires_at, s.protected_recovery_metadata, s.protected_cleanup_policy, s.projection_metadata"""
+_JOB_CAP_PREDICATE = b"""        (s.kind IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.kind, 'UTF8')) OPERATOR(pg_catalog.<=) 3)
         AND (s.subscription_id IS NULL OR pg_catalog.octet_length(s.subscription_id) OPERATOR(pg_catalog.<=) 256)
         AND (s.namespace IS NOT NULL AND pg_catalog.octet_length(s.namespace) OPERATOR(pg_catalog.<=) 256)
         AND (s.command_type IS NOT NULL AND pg_catalog.octet_length(s.command_type) OPERATOR(pg_catalog.<=) 256)
@@ -225,10 +221,8 @@ _W02_SQL = b"""WITH source AS MATERIALIZED (
         AND (s.protected_recovery_metadata IS NOT NULL AND pg_catalog.octet_length(s.protected_recovery_metadata) OPERATOR(pg_catalog.<=) 1048576)
         AND (s.protected_cleanup_policy IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.protected_cleanup_policy, 'UTF8')) OPERATOR(pg_catalog.<=) 20)
         AND (s.projection_metadata IS NOT NULL AND pg_catalog.octet_length(s.projection_metadata) OPERATOR(pg_catalog.<=) 1048576)
-    ) IS TRUE AS cap_ok
-    FROM source AS s
-)
-SELECT c.cap_ok,
+"""
+_JOB_RESULT_PROJECTION = b"""SELECT c.cap_ok,
        c.work_id,
        CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.kind, 'UTF8') ELSE NULL::pg_catalog.bytea END AS kind,
        CASE WHEN c.cap_ok THEN c.subscription_id ELSE NULL::pg_catalog.bytea END AS subscription_id,
@@ -301,7 +295,51 @@ SELECT c.cap_ok,
        CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.protected_cleanup_policy, 'UTF8') ELSE NULL::pg_catalog.bytea END AS protected_cleanup_policy,
        CASE WHEN c.cap_ok THEN c.projection_metadata ELSE NULL::pg_catalog.bytea END AS projection_metadata
 FROM checked AS c
-LIMIT 2"""
+"""
+_W02_SQL = (
+    b"WITH source AS MATERIALIZED (\n"
+    + _JOB_SOURCE_PROJECTION
+    + b"\n    FROM modkit_workers.w02($1::pg_catalog.uuid) AS s\n"
+    b"), checked AS (\n    SELECT s.*, (\n"
+    + _JOB_CAP_PREDICATE
+    + b"    ) IS TRUE AS cap_ok\n    FROM source AS s\n)\n"
+    + _JOB_RESULT_PROJECTION
+    + b"LIMIT 2"
+)
+_W03_SQL = (
+    b"WITH source AS MATERIALIZED (\n"
+    + _JOB_SOURCE_PROJECTION
+    + b"\n    FROM modkit_workers.w03($1::pg_catalog.bytea, "
+    b"$2::pg_catalog.timestamptz, $3::pg_catalog.uuid, "
+    b"$4::pg_catalog.int4, $5::pg_catalog.int8) AS s\n"
+    b"    LIMIT ($4::pg_catalog.int4 + 1)\n"
+    b"), checked AS (\n    SELECT s.*, (\n"
+    + _JOB_CAP_PREDICATE
+    + b"""        AND (
+            pg_catalog.sum(
+                COALESCE(pg_catalog.octet_length(s.intent_evidence)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.semantic_input)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.replay_input)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.protected_binding)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.result)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.resolution_record_result)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.resolution_record_evidence)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.resolution_record_binding)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.job_protected_binding)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.job_semantic_input)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.protected_sidecar)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.protected_reference)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.protected_recovery_metadata)::pg_catalog.int8, 0::pg_catalog.int8)
+                + COALESCE(pg_catalog.octet_length(s.projection_metadata)::pg_catalog.int8, 0::pg_catalog.int8)
+            ) OVER () OPERATOR(pg_catalog.<=) $5::pg_catalog.int8::pg_catalog.numeric
+        )
+    ) IS TRUE AS cap_ok
+    FROM source AS s
+)
+"""
+    + _JOB_RESULT_PROJECTION
+    + b"ORDER BY c.created_at, c.work_id\nLIMIT ($4::pg_catalog.int4 + 1)"
+)
 
 _W01_CASTS = (
     "pg_catalog.uuid",
@@ -771,13 +809,37 @@ _W02_COLUMNS = (
 )
 
 
-def _selected_sql_descriptor(spec: StatementSpec, operation=None) -> _SqlDescriptor:
+def _selected_sql_descriptor(
+    spec: StatementSpec, operation=None, *, request=None, max_page_payload_bytes=None
+) -> _SqlDescriptor:
     """Select one fixed plan after exact canonical raw metadata validation."""
     if operation is not None:
         from .native_profile import _validate_operation
 
         _validate_operation(operation)
         if spec is not operation.statement:
+            _reject_validation()
+        if spec.key == "W03":
+            from .native_profile import _result_row_limit, _validate_max_page_payload_bytes
+
+            _validate_max_page_payload_bytes(max_page_payload_bytes)
+            limit = _result_row_limit(request, operation)
+            return _SqlDescriptor(
+                sql=_W03_SQL,
+                parameter_casts=(
+                    "pg_catalog.bytea",
+                    "pg_catalog.timestamptz",
+                    "pg_catalog.uuid",
+                    "pg_catalog.int4",
+                    "pg_catalog.int8",
+                ),
+                canonical_columns=spec.result.columns,
+                transport_columns=_W02_COLUMNS,
+                cardinality=CardinalityKind.LIMIT,
+                sentinel_limit=limit + 1,
+                max_admitted_cell_payload_bytes=14688732,
+            )
+        if max_page_payload_bytes is not None:
             _reject_validation()
         submit = spec.key == "W01"
         return _SqlDescriptor(
@@ -790,6 +852,8 @@ def _selected_sql_descriptor(spec: StatementSpec, operation=None) -> _SqlDescrip
             max_admitted_cell_payload_bytes=18 if submit else 14688732,
         )
     _statement_shape_raw(spec)
+    if max_page_payload_bytes is not None:
+        _reject_validation()
     if spec is get_statement("E14"):
         return _E14
     return _E28
@@ -800,13 +864,17 @@ _MIN_UTC_MICROSECONDS = -63082281600000000
 _MAX_UTC_MICROSECONDS = 252455615999999999
 
 
-def _decode_binary_transport_row(spec: StatementSpec, values: tuple, operation=None) -> tuple:
+def _decode_binary_transport_row(
+    spec: StatementSpec, values: tuple, operation=None, *, request=None, max_page_payload_bytes=None
+) -> tuple:
     """Convert one copied fixed transport row, without driver authority.
 
     Result metadata/cardinality and capacity must be proved before copying.
     Full request/record validation and result ownership remain separate gates.
     """
-    descriptor = _selected_sql_descriptor(spec, operation)
+    descriptor = _selected_sql_descriptor(
+        spec, operation, request=request, max_page_payload_bytes=max_page_payload_bytes
+    )
     if type(values) is not tuple or len(values) != len(descriptor.transport_columns):
         _reject_validation()
     if type(values[0]) is not bytes or values[0] != b"\x01":

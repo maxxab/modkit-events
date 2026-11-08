@@ -428,3 +428,345 @@ def test_selected_broken_companion_is_not_bypassed(tmp_path):
     )
     assert result.returncode != 0, "broken package initialization was bypassed"
     assert "RuntimeError: selected Workers initialization failed" in result.stderr, result.stderr
+
+
+@workers_companion
+def test_listing_freeze_retains_exact_cursor_parameters_and_context():
+    _run(
+        _JOB_SETUP
+        + """
+from modkit_events.persistence.errors import _ValidationReject
+statement=WC.get_statement('W03')
+context=B._return_context_raw()
+cursor_id=UUID(int=7)
+parameters=(b'jobs',now,cursor_id,256)
+request=P.freeze_request(statement,parameters,context=context)
+assert request.parameters is parameters and request.context is context
+assert request.parameters[1] is now and request.parameters[2] is cursor_id
+P.validate_request(request,statement)
+for parameters in ((b'other',None,None,1),(b'jobs',now,None,1),(b'jobs',None,cursor_id,1),(b'jobs',None,None,0),(b'jobs',None,None,257),(b'jobs',None,None,True)):
+    try:P.freeze_request(statement,parameters,context=context)
+    except _ValidationReject as error:assert type(error) is _ValidationReject
+    else:raise AssertionError('invalid listing parameters accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+_LIST_SETUP = (
+    _JOB_SETUP
+    + """
+Q=16777216
+def listing():
+    return P.WorkersNativeOperation(statement=WC.get_statement('W03'),request_type=WM.JobListRequest,build_request=WB._list_jobs_raw,decode_rows=WR._decode_list_raw,validate_result=WR._validate_list_result_raw,result_types=(WO.JobRecord,WO.JobDetails,WO.JobPayload))
+def list_request(limit, after=None):
+    return WB._list_jobs_raw(WM.JobListRequest(after=after,limit=limit))
+"""
+)
+
+
+@workers_companion
+def test_listing_request_bound_includes_both_pages_and_sentinel_transport():
+    _run(
+        _LIST_SETUP
+        + """
+from sys import getsizeof
+from modkit_events.persistence.errors import _ValidationReject
+op=listing()
+# Independently derive schema scalar maxima and interpreter carriers. No
+# production cap/upper/capacity helper contributes to the expected terms.
+short_bytes={'subscription_id','namespace','command_type','scope_application','scope_tenant','scope_owner','idempotency_key','job_application','job_tenant','job_owner','protected_codec','protected_key_version'}
+def cap(name,wire):
+    if name.startswith('resolution_record_'):name=name[18:]
+    if wire is C.WireType.TEXT:return 256 if name=='reason' else 32
+    if name=='scope_evidence':return 781
+    if name=='schema_version_decimal':return 4096
+    if name in ('result_digest','completion_result_digest'):return 32
+    return 256 if name in short_bytes else 1048576
+def upper(wire,length=0):
+    if wire is C.WireType.BYTEA:return getsizeof(b'')+length
+    if wire is C.WireType.TEXT:return getsizeof(chr(0x10ffff))+4*length
+    if wire is C.WireType.UUID:return getsizeof(UUID(int=0))+getsizeof(2**128-1)
+    if wire is C.WireType.TIMESTAMPTZ:return getsizeof(now)
+    if wire is C.WireType.BOOL:return getsizeof(True)
+    return getsizeof(2**64-1)
+def columns(values):
+    return sum(max(getsizeof(None),upper(col.wire_type,cap(col.name,col.wire_type))) for col in values)
+def carrier(cls):return getsizeof(object.__new__(cls))
+work_cols=C.get_statement('E15').result.columns
+R=sum(carrier(cls) for cls in (WO.JobRecord,WO.JobDetails,WO.JobPayload,O.WorkObservation,O.ResolutionObservation))
+R+=columns(work_cols[:39])+columns(work_cols[40:])
+R+=upper(C.WireType.TEXT,36)+5*upper(C.WireType.TEXT,256)+6*upper(C.WireType.BYTEA,1048576)+upper(C.WireType.TIMESTAMPTZ)
+R+=getsizeof(M.MaterialState.PRESENT)+getsizeof(M.CleanupPolicy.RETAIN)
+assert P.result_capacity(operation('W02'))==R
+canonical=getsizeof((None,)*71)+columns(op.statement.result.columns)
+widths={C.WireType.BOOL:1,C.WireType.INT4:4,C.WireType.INT8:8,C.WireType.XID8:8,C.WireType.UUID:16,C.WireType.TIMESTAMPTZ:8}
+transport=getsizeof((None,)*72)+getsizeof(b'')+1
+for col in op.statement.result.columns:
+    width=widths.get(col.wire_type)
+    if width is None:width=cap(col.name,col.wire_type)*(4 if col.wire_type is C.WireType.TEXT else 1)
+    cell=getsizeof(b'')+width
+    transport+=max(getsizeof(None),cell) if col.nullable else cell
+capacity_points=[]
+M=14*1048576
+for budget in (1,16777216,33554432,2**31,3758096384):
+    capacities=[]
+    for n in (1,2,256):
+        request=P.freeze_request(op.statement,(b"jobs",None,None,n),context=B._return_context_raw())
+        containers=getsizeof((None,)*n)+getsizeof([None]*n)
+        final=containers+n*(R-M)+min(n*M,budget)
+        canonical_page=containers+n*(canonical-M)+min(n*M,budget)
+        sentinel=getsizeof((None,)*(n+1))+(n+1)*(transport-M)+min((n+1)*M,budget)
+        expected=final+canonical_page+sentinel
+        assert P.result_capacity(op,request=request,max_page_payload_bytes=budget)==expected
+        assert P._result_row_limit(request,op)==n
+        capacities.append(expected)
+        capacity_points.append(dict(n=n,Q=budget,F=final,Cpage=canonical_page,S=sentinel,B=expected))
+    assert capacities[0]<capacities[1]<capacities[2]
+assert P._result_row_limit(WB._read_job_raw(WM.JobReadRequest(work_id=str(UUID(int=1)))),operation('W02'))==1
+try:P.result_capacity(op)
+except _ValidationReject:pass
+else:raise AssertionError('W03 capacity accepted no retained request')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+@pytest.mark.parametrize("count", [0, 1, 2, 256])
+def test_listing_result_size_measures_full_tuple_graph_without_replacement(count):
+    _run(
+        _LIST_SETUP
+        + f"count={count}\n"
+        + """
+from dataclasses import fields
+from sys import getsizeof
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+op=listing();request=P.freeze_request(op.statement,(b"jobs",None,None,max(1,count)),context=B._return_context_raw())
+rows=[]
+for index in range(count):
+    row=list(read_row(submit,index%2==1))
+    ident=UUID(int=index+1)
+    row[0]=ident;row[56]=ident
+    if index%2==1:row[42]=ident
+    rows.append(tuple(row))
+value=tuple(WR._decode_read_raw(WB._read_job_raw(WM.JobReadRequest(work_id=str(row[0]))),(row,)) for row in rows)
+independent=getsizeof(value)
+for record in value:
+    carriers=[record,record.work,record.details,record.payload]
+    if record.work.resolution is not None:carriers.append(record.work.resolution)
+    independent+=sum(getsizeof(carrier) for carrier in carriers)
+    for carrier in carriers:
+        for field in fields(carrier):
+            scalar=getattr(carrier,field.name)
+            if any(scalar is nested for nested in carriers):continue
+            independent+=getsizeof(scalar)
+            if type(scalar) is UUID:independent+=getsizeof(scalar.int)
+assert P._result_size(request,value,op,max_page_payload_bytes=Q)==independent
+assert independent<=P.result_capacity(op,request=request,max_page_payload_bytes=Q)
+assert all(WO._validate_job_record_raw(record) is None for record in value)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_listing_profile_rejects_nonexact_shapes_scalars_and_context_without_hooks():
+    _run(
+        _LIST_SETUP
+        + """
+from dataclasses import replace
+from datetime import tzinfo
+from modkit_events.persistence.errors import _ValidationReject
+op=listing();context=B._return_context_raw()
+def rejected(call):
+    try:call()
+    except _ValidationReject as error:assert type(error) is _ValidationReject
+    else:raise AssertionError('invalid listing accepted')
+class Integer(int):pass
+class Zone(tzinfo):
+    def utcoffset(self,value):raise AssertionError('custom timezone hook reached')
+class Bytes(bytes):pass
+bad_uuid=UUID(int=1);object.__setattr__(bad_uuid,'int',object())
+for parameters in ((b'jobs',None,None,Integer(1)),(Bytes(b'jobs'),None,None,1),(b'jobs',datetime(2026,1,1,tzinfo=Zone()),UUID(int=1),1),(b'jobs',now,bad_uuid,1)):
+    rejected(lambda:P.freeze_request(op.statement,parameters,context=context))
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+rejected(lambda:P.freeze_request(op.statement,(b'jobs',None,None,1),context=submit.context))
+bad_context=object.__new__(B.ReturnContext)
+object.__setattr__(bad_context,'expected',())
+object.__setattr__(bad_context,'readiness',object())
+rejected(lambda:P.freeze_request(op.statement,(b'jobs',None,None,1),context=bad_context))
+rejected(lambda:replace(op,request_type=WM.JobReadRequest))
+rejected(lambda:replace(op,build_request=WB._read_job_raw))
+rejected(lambda:replace(op,result_types=(WO.JobRecord,WO.JobPayload,WO.JobDetails)))
+rejected(lambda:replace(op,statement=WC.get_statement('W04')))
+request=list_request(1)
+rejected(lambda:P.result_capacity(replace(op,statement=replace(op.statement)),request=request,max_page_payload_bytes=Q))
+loaded={name:module for name,module in tuple(sys.modules.items()) if name.startswith('modkit_workers')}
+for name in loaded:del sys.modules[name]
+assert P._result_row_limit(request,op)==1
+assert P.result_capacity(op,request=request,max_page_payload_bytes=Q)>P.result_capacity(operation('W02'))
+sys.modules.update(loaded)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_listing_preparation_keeps_exact_cursor_scalars_and_independent_a_charge():
+    _run(
+        _LIST_SETUP
+        + """
+from sys import getsizeof
+logical=WM.JobListRequest(after=M.WorkCursor(created_at=now,work_id=UUID(int=2**128-1)),limit=256)
+cursor=logical.after
+def forbidden(*args,**kwargs):raise AssertionError('public constructor or replacement reached')
+WM.JobListRequest.__post_init__=forbidden
+M.WorkCursor.__post_init__=forbidden
+WB.replace=forbidden
+request=WB._list_jobs_raw(logical)
+assert request.parameters[1] is cursor.created_at and request.parameters[2] is cursor.work_id
+assert request.context.expected==() and request.context.readiness is None
+independent=sum(getsizeof(value) for value in (request,request.parameters,request.context,request.context.expected,request.context.readiness))
+independent+=sum(getsizeof(value) for value in request.parameters)+getsizeof(cursor.work_id.int)
+keys=('token','capacity','data','borrows','x','builder','profile')
+metadata=dict.fromkeys(keys);old_size=getsizeof(metadata)
+metadata['max_page_payload_bytes']=None
+independent+=getsizeof(Q)+max(0,getsizeof(metadata)-old_size)
+assert P._request_size(request,listing(),max_page_payload_bytes=Q)==independent
+assert independent<=P._preparation_capacity(listing(),max_page_payload_bytes=Q)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_listing_full_graph_preflight_precedes_semantics_and_preserves_primary():
+    _run(
+        _LIST_SETUP
+        + """
+from modkit_events.persistence.errors import _ValidationReject
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+read=WB._read_job_raw(WM.JobReadRequest(work_id=str(UUID(int=1))))
+record=WR._decode_read_raw(read,(read_row(submit),))
+op=listing();request=list_request(1)
+def rejected(value):
+    try:P._result_size(request,value,op,max_page_payload_bytes=Q)
+    except _ValidationReject as error:assert type(error) is _ValidationReject
+    else:raise AssertionError('invalid page graph accepted')
+for value in (None,[],(record,record),(object(),)):
+    rejected(value)
+class HostileBytes(bytes):
+    def __sizeof__(self):raise AssertionError('custom size hook reached')
+object.__setattr__(record.payload,'semantic_input',HostileBytes(b'x'))
+rejected((record,))
+object.__setattr__(record.payload,'semantic_input',submit.context.expected[0].semantic_input)
+primary=RuntimeError('unexpected graph size');cause=ValueError('cause');context=KeyError('context')
+primary.__cause__=cause;primary.__context__=context;primary.__suppress_context__=False
+saved=P.getsizeof
+def sizing(value):
+    if value is record:raise primary
+    return saved(value)
+P.getsizeof=sizing
+try:P._result_size(request,(record,),op,max_page_payload_bytes=Q)
+except RuntimeError as caught:
+    assert caught is primary and caught.__cause__ is cause and caught.__context__ is context
+    assert caught.__suppress_context__ is False
+else:raise AssertionError('primary swallowed')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_listing_present_material_graphs_charge_every_scalar_and_resolution():
+    _run(
+        _LIST_SETUP
+        + """
+from dataclasses import fields
+from sys import getsizeof
+material=M.ProtectedBindingInput(material_state=M.MaterialState.PRESENT,codec='c'*256,key_version='k'*256,expires_at=now,cleanup_policy=M.CleanupPolicy.ERASE_AFTER_TERMINAL,sidecar=b's'*350000,reference=None,content_binding=b'c'*250000,recovery_metadata=B.canonical_json({'r':'r'*50000}),projection_metadata=B.canonical_json({'p':'p'*50000}))
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({'data':'x'*100000})))
+records=[]
+for resolved in (False,True):
+    row=list(read_row(submit,resolved))
+    ident=UUID(int=1+resolved);row[0]=ident;row[56]=ident
+    if resolved:row[42]=ident
+    row[62:]=('present',material.sidecar,None,b'c'*256,b'k'*256,now,material.recovery_metadata,'erase_after_terminal',material.projection_metadata)
+    read=WB._read_job_raw(WM.JobReadRequest(work_id=str(ident)))
+    records.append(WR._decode_read_raw(read,(tuple(row),)))
+value=tuple(records);request=list_request(2)
+independent=getsizeof(value)
+for record in value:
+    carriers=[record,record.work,record.details,record.payload]
+    if record.work.resolution is not None:carriers.append(record.work.resolution)
+    independent+=sum(getsizeof(carrier) for carrier in carriers)
+    for carrier in carriers:
+        for field in fields(carrier):
+            scalar=getattr(carrier,field.name)
+            if any(scalar is nested for nested in carriers):continue
+            independent+=getsizeof(scalar)
+            if type(scalar) is UUID:independent+=getsizeof(scalar.int)
+assert P._result_size(request,value,listing(),max_page_payload_bytes=Q)==independent
+assert independent<=P.result_capacity(listing(),request=request,max_page_payload_bytes=Q)
+assert all(record.payload.sidecar is material.sidecar for record in value)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_listing_budget_is_exact_bounded_scalar_without_common_default():
+    _run(
+        _LIST_SETUP
+        + """
+from modkit_events.persistence.errors import _ValidationReject
+assert hasattr(P,'_validate_max_page_payload_bytes'), 'exact page budget helper missing'
+assert P.DEFAULT_LIST_PAGE_PAYLOAD_BYTES==16777216
+assert P.MAX_LIST_PAGE_PAYLOAD_BYTES==3758096384
+class Integer(int):pass
+op=listing();request=list_request(1)
+for budget in (1,16777216,2**31,3758096384):
+    assert P._validate_max_page_payload_bytes(budget) is budget
+for budget in (None,True,Integer(1),0,-1,3758096385,1.0):
+    for call in (lambda:P._validate_max_page_payload_bytes(budget),
+                 lambda:P.result_capacity(op,request=request,max_page_payload_bytes=budget)):
+        try:call()
+        except _ValidationReject as error:assert type(error) is _ValidationReject
+        else:raise AssertionError('invalid budget accepted')
+for key in ('W01','W02'):
+    try:P.result_capacity(operation(key),max_page_payload_bytes=1)
+    except _ValidationReject:pass
+    else:raise AssertionError('nonlisting budget accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+@pytest.mark.parametrize("resolved", [False, True])
+def test_listing_typed_payload_counts_all_fourteen_occurrences_at_exact_budget(resolved):
+    _run(
+        _LIST_SETUP
+        + f"resolved={resolved!r}\n"
+        + """
+from modkit_events.persistence.errors import _ValidationReject
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({'x':'payload'})))
+row=read_row(submit,resolved)
+record=WR._decode_read_raw(WB._read_job_raw(WM.JobReadRequest(work_id=str(UUID(int=1)))),(row,))
+names=('intent_evidence','semantic_input','replay_input','protected_binding','result','resolution_record_result','resolution_record_evidence','resolution_record_binding','job_protected_binding','job_semantic_input','protected_sidecar','protected_reference','protected_recovery_metadata','projection_metadata')
+columns=WC.get_statement('W03').result.columns
+wire=dict(zip((column.name for column in columns),row))
+exact=sum(len(wire[name]) for name in names if wire[name] is not None)
+# Equal/shared protected and semantic fields must each count independently.
+assert wire['protected_binding'] is wire['job_protected_binding']
+assert wire['semantic_input'] is wire['job_semantic_input']
+request=list_request(1);op=listing()
+size=P._result_size(request,(record,),op,max_page_payload_bytes=exact)
+assert size>exact
+try:P._result_size(request,(record,),op,max_page_payload_bytes=exact-1)
+except _ValidationReject as error:assert type(error) is _ValidationReject
+else:raise AssertionError('Q+1 retained graph accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )

@@ -411,11 +411,13 @@ def reserve_preparation(execution, capacity, /, *, execution_ledger):
     return token
 
 
-def _preparation_size(payload, operation=None):
+def _preparation_size(payload, operation=None, *, max_page_payload_bytes=None):
     if operation is not None:
         from .native_profile import _request_size
 
-        return _request_size(payload, operation)
+        return _request_size(payload, operation, max_page_payload_bytes=max_page_payload_bytes)
+    if max_page_payload_bytes is not None:
+        _reject_validation()
     if type(payload) is bytes:
         return len(payload)
     if type(payload) is not FrozenRequest:
@@ -437,13 +439,20 @@ def _preparation_size(payload, operation=None):
 
 
 def _set_preparation_paid(
-    preparation, payload, ledger, reservation, *, unreturned=False, operation=None
+    preparation,
+    payload,
+    ledger,
+    reservation,
+    *,
+    unreturned=False,
+    operation=None,
+    max_page_payload_bytes=None,
 ):
     """Validate and publish under existing D; known rejections return codes."""
     _require_paid_preparation(reservation, unreturned)
     code = None
     try:
-        size = _preparation_size(payload, operation)
+        size = _preparation_size(payload, operation, max_page_payload_bytes=max_page_payload_bytes)
     except _ValidationReject as error:
         if type(error) is not _ValidationReject:
             raise
@@ -465,6 +474,8 @@ def _set_preparation_paid(
             else:
                 record["data"] = payload
                 record["profile"] = operation
+                if operation is not None and operation.statement.key == "W03":
+                    record["max_page_payload_bytes"] = max_page_payload_bytes
     record = None
     return code
 
@@ -704,6 +715,31 @@ def _ticket(token, ledger):
     return p
 
 
+def _listing_capacity_error(preparation, capacity):
+    """Known W03 rejection stays local; unexpected failures keep paid D."""
+    from .native_profile import _validate_operation
+    from .native_profile import result_capacity as profile_capacity
+
+    profile = preparation.get("profile")
+    if profile is None:
+        return None
+    try:
+        _validate_operation(profile)
+        if profile.statement.key == "W03":
+            minimum = profile_capacity(
+                profile,
+                request=preparation["data"],
+                max_page_payload_bytes=preparation.get("max_page_payload_bytes"),
+            )
+            if type(capacity) is not int or capacity < minimum:
+                return ErrorCode.CAPACITY_EXCEEDED
+    except _ValidationReject as error:
+        if type(error) is not _ValidationReject:
+            raise
+        return ErrorCode.PROFILE_REJECTED
+    return None
+
+
 def _start_operation(ticket, result, ledger, *, reservation=None):
     """Issuer-only start; return the exact paid request, never caller live args."""
     flag = _context(ledger)
@@ -731,11 +767,13 @@ def _start_operation(ticket, result, ledger, *, reservation=None):
                 if root is None or root["token"] is not p.current or root["state"] != "ACTIVE":
                     code = ErrorCode.INVALID_OBSERVATION
                 else:
-                    request = p.operation["prep"]["data"]
-                    p.operation["result_stamp"] = result._stamp
-                    p.operation["state"] = "RUNNING"
-                    p.operation["running"] = True
-                    p.operation["issuer"] = reservation
+                    code = _listing_capacity_error(p.operation["prep"], record["capacity"])
+                    if code is None:
+                        request = p.operation["prep"]["data"]
+                        p.operation["result_stamp"] = result._stamp
+                        p.operation["state"] = "RUNNING"
+                        p.operation["running"] = True
+                        p.operation["issuer"] = reservation
         p = record = root = None
     _reject(code, flag)
     return request
@@ -914,6 +952,60 @@ def release_ticket(ticket, /, *, execution_ledger):
     _reject(code, flag)
 
 
+def result_capacity(ticket, /, *, execution_ledger):
+    """Return only the bound of this ADMITTED ticket's retained component."""
+    from .native_profile import result_capacity as profile_capacity
+    from .native_profile import validate_request
+
+    flag = _context(execution_ledger)
+    _require_handles(flag, ticket)
+    code = capacity = None
+    with _construction(flag):
+        with _registry._synchronized():
+            p = _ticket(ticket, execution_ledger)
+            preparation = root = None
+            if p is None:
+                code = ErrorCode.INVALID_OBSERVATION
+            elif not _usable(p):
+                code = ErrorCode.PROFILE_REJECTED
+            elif p.operation["state"] != "ADMITTED":
+                code = ErrorCode.INVALID_OBSERVATION
+            else:
+                root = p.roots.get(ticket._subject)
+                preparation = p.operation["prep"]
+                if (
+                    root is None
+                    or root["token"] is not p.current
+                    or root["state"] != "ACTIVE"
+                    or _envelope(preparation["token"], execution_ledger, "A") is not preparation
+                    or preparation["x"] is not p.x
+                ):
+                    code = ErrorCode.INVALID_OBSERVATION
+                else:
+                    profile = preparation.get("profile")
+                    if profile is None:
+                        code = ErrorCode.PROFILE_REJECTED
+                    else:
+                        try:
+                            from .native_profile import _validate_operation
+
+                            _validate_operation(profile)
+                            validate_request(preparation["data"], profile.statement)
+                            capacity = profile_capacity(
+                                profile,
+                                request=preparation["data"],
+                                max_page_payload_bytes=preparation.get("max_page_payload_bytes"),
+                            )
+                        except _ValidationReject as error:
+                            if type(error) is not _ValidationReject:
+                                raise
+                            code = ErrorCode.PROFILE_REJECTED
+                    profile = None
+            p = preparation = root = None
+    _reject(code, flag)
+    return capacity
+
+
 def reserve_result(ticket, capacity, /, *, execution_ledger):
     flag = _context(execution_ledger)
     _require_handles(flag, ticket)
@@ -941,17 +1033,20 @@ def reserve_result(ticket, capacity, /, *, execution_ledger):
                 code = ErrorCode.PROFILE_REJECTED
             elif p.operation["state"] != "ADMITTED":
                 code = ErrorCode.RESOURCE_BUSY
-            elif (
-                p.operation["results"] >= _limits.results_per_ticket
-                or p.operation["bytes"] + capacity > _limits.result_bytes_per_ticket
-                or not _charge({"B": 1, "BB": capacity})
-            ):
-                code = ErrorCode.CAPACITY_EXCEEDED
             else:
-                candidate["x"], candidate["operation"] = p.x, p.operation
-                p.operation["results"] += 1
-                p.operation["bytes"] += capacity
-                _results[token._stamp] = candidate
+                code = _listing_capacity_error(p.operation["prep"], capacity)
+                if code is None:
+                    if (
+                        p.operation["results"] >= _limits.results_per_ticket
+                        or p.operation["bytes"] + capacity > _limits.result_bytes_per_ticket
+                        or not _charge({"B": 1, "BB": capacity})
+                    ):
+                        code = ErrorCode.CAPACITY_EXCEEDED
+                    else:
+                        candidate["x"], candidate["operation"] = p.x, p.operation
+                        p.operation["results"] += 1
+                        p.operation["bytes"] += capacity
+                        _results[token._stamp] = candidate
         p = candidate = None
     _reject(code, flag)
     return token
@@ -1032,13 +1127,14 @@ def set_result(result, payload, /, *, execution_ledger):
     flag = _context(execution_ledger)
     _require_handles(flag, result)
     with _construction(flag):
-        code = request = record = operation = None
+        code = request = record = operation = max_page_payload_bytes = None
         with _registry._synchronized():
             record = _envelope(result, execution_ledger, "B")
             code = _result_publication_error(record, result)
             if code is None:
                 request = record["operation"]["prep"]["data"]
                 operation = record["operation"]["prep"].get("profile")
+                max_page_payload_bytes = record["operation"]["prep"].get("max_page_payload_bytes")
         record = None
         if code is None:
             try:
@@ -1048,7 +1144,12 @@ def set_result(result, payload, /, *, execution_ledger):
                     else:
                         from .native_profile import _result_size
 
-                        size = _result_size(request, payload, operation)
+                        size = _result_size(
+                            request,
+                            payload,
+                            operation,
+                            max_page_payload_bytes=max_page_payload_bytes,
+                        )
                 elif type(payload) is bytes:
                     size = len(payload)
                 else:
@@ -1071,7 +1172,7 @@ def set_result(result, payload, /, *, execution_ledger):
                     else:
                         record["data"] = payload
                         record["populated"] = True
-        record = request = operation = None
+        record = request = operation = max_page_payload_bytes = None
     _reject(code, flag)
 
 
@@ -1526,7 +1627,9 @@ def _require_handles(flag, *values):
         _fail(ErrorCode.LOCAL_INVALID_ARGUMENT, unconfirmed=flag)
 
 
-def _prepare_component(execution, operation, logical_request, /, *, execution_ledger):
+def _prepare_component(
+    execution, operation, logical_request, /, *, execution_ledger, max_page_payload_bytes=None
+):
     """One canonical D and fixed A, both paid before the trusted builder."""
     from .native_profile import _preparation_capacity, _validate_operation
 
@@ -1539,7 +1642,9 @@ def _prepare_component(execution, operation, logical_request, /, *, execution_le
             _validate_operation(operation)
             if type(logical_request) is not operation.request_type:
                 _reject_validation()
-            capacity = _preparation_capacity(operation)
+            capacity = _preparation_capacity(
+                operation, max_page_payload_bytes=max_page_payload_bytes
+            )
             preparation, code = _reserve_preparation_paid(
                 execution, capacity, execution_ledger, paid
             )
@@ -1553,12 +1658,13 @@ def _prepare_component(execution, operation, logical_request, /, *, execution_le
                     paid,
                     unreturned=True,
                     operation=operation,
+                    max_page_payload_bytes=max_page_payload_bytes,
                 )
         except _ValidationReject as error:
             if type(error) is not _ValidationReject:
                 raise
             code = ErrorCode.LOCAL_INVALID_ARGUMENT
-        request = None
+        request = max_page_payload_bytes = None
         if code is not None:
             if reserved:
                 cleanup_code = _release_preparation_paid(
@@ -1591,3 +1697,42 @@ def _operation_profile(ticket, ledger, /, *, reservation):
         physical = None
     _reject(code, flag)
     return profile
+
+
+def _operation_max_page_payload_bytes(ticket, ledger, /, *, reservation):
+    """Return only this RUNNING issuer's exact retained optional budget."""
+    from .native_profile import _validate_operation, _validate_operation_budget
+
+    flag = _context(ledger)
+    _require_handles(flag, ticket)
+    if not _reservation_live(reservation):
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=flag)
+    code = budget = None
+    with _registry._synchronized():
+        physical = _ticket(ticket, ledger)
+        if (
+            physical is None
+            or physical.operation.get("issuer") is not reservation
+            or physical.operation["state"] != "RUNNING"
+            or not physical.operation["running"]
+        ):
+            code = ErrorCode.INVALID_OBSERVATION
+        else:
+            preparation = physical.operation["prep"]
+            profile = preparation.get("profile")
+            budget = preparation.get("max_page_payload_bytes")
+            try:
+                if profile is None:
+                    if budget is not None:
+                        _reject_validation()
+                else:
+                    _validate_operation(profile)
+                    _validate_operation_budget(profile, budget)
+            except _ValidationReject as error:
+                if type(error) is not _ValidationReject:
+                    raise
+                code = ErrorCode.PROFILE_REJECTED
+            preparation = profile = None
+        physical = None
+    _reject(code, flag)
+    return budget
