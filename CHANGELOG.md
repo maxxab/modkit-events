@@ -21,6 +21,7 @@
 - **persistence:** add publication reconciliation (`a46e5f4b1628`)
 - **persistence:** add source-only Workers native transport (`3d0b10d1b602`)
 - **publication:** add bounded per-item batch outcomes (`c593371b39fb`)
+- **persistence:** support bounded native job listing (`e28ec011a04b`)
 
 ### Bug Fixes
 
