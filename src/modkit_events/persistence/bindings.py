@@ -618,39 +618,62 @@ def _float_decimal(value):
     return ('-' if negative else '')+str(whole)+'.'+(''.join(fraction) or '0')
 
 
-def _emit(value):
+def _emit(value, *, _reject=None):
     """Append bounded tokens, rejecting BEFORE an expanded buffer exceeds budget."""
-    output=bytearray()
+    output = bytearray()
+
     def append(raw):
-        if len(raw)>_MAX-len(output):raise ValueError
+        if len(raw) > _MAX - len(output):
+            _reject_scalar(_reject)
         output.extend(raw)
+
     def emit(item):
-        if item is None:append(b'null')
-        elif type(item) is bool:append(b'true' if item else b'false')
-        elif type(item) is int:append(_decimal(item))
-        elif type(item) is float:append(_float_decimal(item).encode('ascii'))
+        if item is None:
+            append(b"null")
+        elif type(item) is bool:
+            append(b"true" if item else b"false")
+        elif type(item) is int:
+            append(_decimal(item, _reject=_reject))
+        elif type(item) is float:
+            append(_float_decimal(item).encode("ascii"))
         elif type(item) is str:
             append(b'"')
             for c in item:
-                if c=='"':append(b'\\"')
-                elif c=='\\':append(b'\\\\')
-                elif ord(c)<32:append(f'\\u{ord(c):04x}'.encode('ascii'))
-                else:append(c.encode('utf8'))
+                if c == '"':
+                    append(b'\\"')
+                elif c == "\\":
+                    append(b"\\\\")
+                elif ord(c) < 32:
+                    append(f"\\u{ord(c):04x}".encode("ascii"))
+                else:
+                    append(c.encode("utf8"))
             append(b'"')
-        elif isinstance(item,Mapping):
-            append(b'{')
-            for index,(key,child) in enumerate(sorted(item.items(),key=lambda pair:pair[0].encode('utf8'))):
-                if index:append(b',')
-                emit(key);append(b':');emit(child)
-            append(b'}')
-        else:
-            append(b'[')
-            for index,child in enumerate(item):
-                if index:append(b',')
+        elif isinstance(item, Mapping):
+            append(b"{")
+            for index, (key, child) in enumerate(
+                sorted(item.items(), key=lambda pair: pair[0].encode("utf8"))
+            ):
+                if index:
+                    append(b",")
+                emit(key)
+                append(b":")
                 emit(child)
-            append(b']')
+            append(b"}")
+        else:
+            append(b"[")
+            for index, child in enumerate(item):
+                if index:
+                    append(b",")
+                emit(child)
+            append(b"]")
+
     emit(value)
     return bytes(output)
+
+
+def _emit_raw(value):
+    """Emit only a previously bounded canonical snapshot with raw rejections."""
+    return _emit(value, _reject=_reject_validation)
 
 
 @_boundary
@@ -724,67 +747,193 @@ def _canonical_event_raw(event):
     return _canonical_event_core(event, _reject=_reject_validation)
 
 
-def _timestamp(value):
-    value=_instant(value)
-    return f'{value.year:04d}-{value.month:02d}-{value.day:02d}T{value.hour:02d}:{value.minute:02d}:{value.second:02d}.{value.microsecond:06d}Z'.encode('ascii')
+def _timestamp(value, *, _reject=None):
+    value = (_instant if _reject is None else _instant_raw)(value)
+    return f"{value.year:04d}-{value.month:02d}-{value.day:02d}T{value.hour:02d}:{value.minute:02d}:{value.second:02d}.{value.microsecond:06d}Z".encode(
+        "ascii"
+    )
 
 
-def _metadata(value,empty=False):
+def _metadata(value, empty=False, *, _reject=None):
+    parse_canonical_json_fn = (
+        parse_canonical_json if _reject is None else _parse_canonical_json_raw
+    )
+    canonical_json_fn = canonical_json if _reject is None else _canonical_json_raw
     if type(value) is bytes:
-        if empty and value==b'':return value
-        parsed=parse_canonical_json(value)
-        if not isinstance(parsed,Mapping):raise ValueError
+        if empty and value == b"":
+            return value
+        parsed = parse_canonical_json_fn(value)
+        if not isinstance(parsed, Mapping):
+            _reject_scalar(_reject)
         return value
-    if not isinstance(value,Mapping):raise ValueError
-    return canonical_json(value)
+    if not isinstance(value, Mapping):
+        _reject_scalar(_reject)
+    return canonical_json_fn(value)
 
 
-def _normalize_material(m):
-    if type(m.material_state) is not MaterialState or m.material_state is MaterialState.ERASED or type(m.cleanup_policy) is not CleanupPolicy:raise ValueError
-    sidecar=None if m.sidecar is None else _bytes(m.sidecar)
-    reference=None if m.reference is None else _bytes(m.reference)
-    content=_bytes(m.content_binding)
-    expires=None if m.expires_at is None else _instant(m.expires_at)
-    projection=_metadata(m.projection_metadata)
-    recovery=_metadata(m.recovery_metadata,empty=m.material_state is MaterialState.ABSENT)
+def _normalize_material(m, *, _reject=None):
+    bytes_fn = _bytes if _reject is None else _bytes_raw
+    instant_fn = _instant if _reject is None else _instant_raw
+    identifier_fn = _identifier if _reject is None else _identifier_raw
+    if (
+        type(m.material_state) is not MaterialState
+        or m.material_state is MaterialState.ERASED
+        or type(m.cleanup_policy) is not CleanupPolicy
+    ):
+        _reject_scalar(_reject)
+    sidecar = None if m.sidecar is None else bytes_fn(m.sidecar)
+    reference = None if m.reference is None else bytes_fn(m.reference)
+    content = bytes_fn(m.content_binding)
+    expires = None if m.expires_at is None else instant_fn(m.expires_at)
+    projection = _metadata(m.projection_metadata, _reject=_reject)
+    recovery = _metadata(
+        m.recovery_metadata,
+        empty=m.material_state is MaterialState.ABSENT,
+        _reject=_reject,
+    )
     if m.material_state is MaterialState.ABSENT:
-        if any(v is not None for v in (sidecar,reference,m.codec,m.key_version,expires)) or m.cleanup_policy is not CleanupPolicy.RETAIN or content!=b'' or recovery!=b'':raise ValueError
+        if (
+            any(
+                v is not None
+                for v in (sidecar, reference, m.codec, m.key_version, expires)
+            )
+            or m.cleanup_policy is not CleanupPolicy.RETAIN
+            or content != b""
+            or recovery != b""
+        ):
+            _reject_scalar(_reject)
     else:
-        if (sidecar is None)==(reference is None) or sidecar==b'' or reference==b'' or not content or not recovery:raise ValueError
-        _identifier(m.codec);_identifier(m.key_version)
-    return dict(sidecar=sidecar,reference=reference,content_binding=content,expires_at=expires,projection_metadata=projection,recovery_metadata=recovery)
+        if (
+            (sidecar is None) == (reference is None)
+            or sidecar == b""
+            or reference == b""
+            or not content
+            or not recovery
+        ):
+            _reject_scalar(_reject)
+        identifier_fn(m.codec)
+        identifier_fn(m.key_version)
+    return dict(
+        sidecar=sidecar,
+        reference=reference,
+        content_binding=content,
+        expires_at=expires,
+        projection_metadata=projection,
+        recovery_metadata=recovery,
+    )
 
 
-@_boundary
-def canonical_protected_binding(material):
-    if type(material) is not ProtectedBindingInput:raise ValueError
-    values=_normalize_material(material)
-    fields=[material.material_state.value.encode(),_optional(None if material.codec is None else _identifier(material.codec)),_optional(None if material.key_version is None else _identifier(material.key_version)),_optional(None if values['expires_at'] is None else _timestamp(values['expires_at'])),material.cleanup_policy.value.encode(),_optional(values['sidecar']),_optional(values['reference']),values['content_binding'],values['recovery_metadata'],values['projection_metadata']]
-    raw=_record(b'protected-binding',fields)
-    return CanonicalEvidence(version=1,content=raw,digest=sha256(raw).digest())
+def _canonical_protected_binding_core(material, *, _reject=None):
+    identifier_fn = _identifier if _reject is None else _identifier_raw
+
+    def _timestamp_fn(value):
+        return _timestamp(value, _reject=_reject)
+
+    if type(material) is not ProtectedBindingInput:
+        _reject_scalar(_reject)
+    values = _normalize_material(material, _reject=_reject)
+    fields = [
+        material.material_state.value.encode(),
+        _optional(None if material.codec is None else identifier_fn(material.codec)),
+        _optional(
+            None
+            if material.key_version is None
+            else identifier_fn(material.key_version)
+        ),
+        _optional(
+            None
+            if values["expires_at"] is None
+            else _timestamp_fn(values["expires_at"])
+        ),
+        material.cleanup_policy.value.encode(),
+        _optional(values["sidecar"]),
+        _optional(values["reference"]),
+        values["content_binding"],
+        values["recovery_metadata"],
+        values["projection_metadata"],
+    ]
+    raw = _record(b"protected-binding", fields, _reject=_reject)
+    return (CanonicalEvidence if _reject is None else _canonical_evidence_raw)(
+        version=1, content=raw, digest=sha256(raw).digest()
+    )
 
 
-def _unoptional(raw):
-    if raw==b'0':return None
-    r=_Reader(raw)
-    if r.take(1)!=b'1':raise ValueError
-    value=r.frame();r.end();return value
+def _unoptional(raw, *, _reject=None):
+    if raw == b"0":
+        return None
+    r = _Reader(raw, _reject=_reject)
+    if r.take(1) != b"1":
+        _reject_scalar(_reject)
+    value = r.frame()
+    r.end()
+    return value
 
 
-@_boundary
-def decode_protected_binding(raw):
-    if type(raw) is not bytes or not 1<=len(raw)<=_MAX:raise ValueError
-    r=_Reader(raw)
-    if r.take(5)!=b'MKPF\x01' or r.frame()!=b'protected-binding' or r.number(4)!=10:raise ValueError
-    f=[r.frame() for _ in range(10)];r.end()
-    codec,key,expiry,sidecar,reference=(_unoptional(f[i]) for i in (1,2,3,5,6))
-    instant=None
+def _decode_protected_binding_core(raw, *, _reject=None):
+    if type(raw) is not bytes or not 1 <= len(raw) <= _MAX:
+        _reject_scalar(_reject)
+    r = _Reader(raw, _reject=_reject)
+    if (
+        r.take(5) != b"MKPF\x01"
+        or r.frame() != b"protected-binding"
+        or r.number(4) != 10
+    ):
+        _reject_scalar(_reject)
+    f = [r.frame() for _ in range(10)]
+    r.end()
+    codec, key, expiry, sidecar, reference = (
+        _unoptional(f[i], _reject=_reject) for i in (1, 2, 3, 5, 6)
+    )
+    if _reject is not None:
+        for value in (codec, key):
+            if value is not None and not 1 <= len(value) <= 256:
+                _reject_scalar(_reject)
+    instant = None
     if expiry is not None:
-        if len(expiry)!=27:raise ValueError
-        instant=datetime.fromisoformat(expiry.decode('ascii').replace('Z','+00:00'))
-        if _timestamp(instant)!=expiry:raise ValueError
-    material=ProtectedBindingInput(material_state=MaterialState(f[0].decode('ascii')),codec=None if codec is None else codec.decode('utf8'),key_version=None if key is None else key.decode('utf8'),expires_at=instant,cleanup_policy=CleanupPolicy(f[4].decode('ascii')),sidecar=sidecar,reference=reference,content_binding=f[7],recovery_metadata=f[8],projection_metadata=f[9])
-    if canonical_protected_binding(material).content!=raw:raise ValueError
+        if len(expiry) != 27:
+            _reject_scalar(_reject)
+        if _reject is not None:
+            if not re.fullmatch(
+                rb"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z",
+                expiry,
+            ):
+                _reject_scalar(_reject)
+            try:
+                instant = datetime.fromisoformat(
+                    expiry.decode("ascii").replace("Z", "+00:00")
+                )
+            except ValueError as error:
+                if type(error) is not ValueError:
+                    raise
+                _reject_scalar(_reject)
+        else:
+            instant = datetime.fromisoformat(
+                expiry.decode("ascii").replace("Z", "+00:00")
+            )
+        if _timestamp(instant, _reject=_reject) != expiry:
+            _reject_scalar(_reject)
+    if _reject is not None:
+        if f[0] not in (b"absent", b"present") or f[4] not in (
+            b"retain",
+            b"erase_after_terminal",
+        ):
+            _reject_scalar(_reject)
+    material = (
+        ProtectedBindingInput if _reject is None else _protected_binding_input_raw
+    )(
+        material_state=MaterialState(f[0].decode("ascii")),
+        codec=None if codec is None else _decode_utf8(codec, _reject=_reject),
+        key_version=None if key is None else _decode_utf8(key, _reject=_reject),
+        expires_at=instant,
+        cleanup_policy=CleanupPolicy(f[4].decode("ascii")),
+        sidecar=sidecar,
+        reference=reference,
+        content_binding=f[7],
+        recovery_metadata=f[8],
+        projection_metadata=f[9],
+    )
+    if _canonical_protected_binding_core(material, _reject=_reject).content != raw:
+        _reject_scalar(_reject)
     return material
 
 
@@ -795,14 +944,62 @@ def validate_protected_binding(raw,material):
     return evidence
 
 
-@_boundary
-def canonical_intent(admission):
-    from .models import AdmissionInput, WorkIdentity, ReplayPolicy
-    if type(admission) is not AdmissionInput or type(admission.identity) is not WorkIdentity or type(admission.replay_policy) is not ReplayPolicy:raise ValueError
-    identity=admission.identity;identity.__post_init__()
-    fields=[identity.kind.value.encode(),_optional(None if identity.subscription_id is None else _identifier(identity.subscription_id)),_identifier(identity.namespace),_identifier(identity.command_type),version_to_decimal(admission.schema_version),version_to_decimal(identity.scope.canonical_version),identity.scope.canonical,_optional(None if identity.idempotency_key is None else _identifier(identity.idempotency_key)),_bytes(admission.semantic_input),_bytes(admission.protected_binding),admission.replay_policy.value.encode(),_decimal(_integer(admission.max_attempts,1,1000)),_optional(None if admission.deadline is None else _timestamp(admission.deadline)),_timestamp(admission.original_available_at)]
-    raw=_record(b'work-intent',fields)
-    return CanonicalEvidence(version=1,content=raw,digest=sha256(raw).digest())
+def _canonical_intent_core(admission, *, _reject=None):
+    identifier_fn = _identifier if _reject is None else _identifier_raw
+    version_to_decimal_fn = (
+        version_to_decimal if _reject is None else _version_to_decimal_raw
+    )
+    bytes_fn = _bytes if _reject is None else _bytes_raw
+    integer_fn = _integer if _reject is None else _integer_raw
+
+    def _timestamp_fn(value):
+        return _timestamp(value, _reject=_reject)
+
+    from .models import AdmissionInput, ReplayPolicy, WorkIdentity
+
+    if (
+        type(admission) is not AdmissionInput
+        or type(admission.identity) is not WorkIdentity
+        or type(admission.replay_policy) is not ReplayPolicy
+    ):
+        _reject_scalar(_reject)
+    identity = admission.identity
+    if _reject is None:
+        identity.__post_init__()
+    else:
+        from .models import _validate_work_identity_raw
+
+        _validate_work_identity_raw(identity)
+    fields = [
+        identity.kind.value.encode(),
+        _optional(
+            None
+            if identity.subscription_id is None
+            else identifier_fn(identity.subscription_id)
+        ),
+        identifier_fn(identity.namespace),
+        identifier_fn(identity.command_type),
+        version_to_decimal_fn(admission.schema_version),
+        version_to_decimal_fn(identity.scope.canonical_version),
+        identity.scope.canonical,
+        _optional(
+            None
+            if identity.idempotency_key is None
+            else identifier_fn(identity.idempotency_key)
+        ),
+        bytes_fn(admission.semantic_input),
+        bytes_fn(admission.protected_binding),
+        admission.replay_policy.value.encode(),
+        _decimal(integer_fn(admission.max_attempts, 1, 1000)),
+        _optional(
+            None if admission.deadline is None else _timestamp_fn(admission.deadline)
+        ),
+        _timestamp_fn(admission.original_available_at),
+    ]
+    raw = _record(b"work-intent", fields, _reject=_reject)
+    return (CanonicalEvidence if _reject is None else _canonical_evidence_raw)(
+        version=1, content=raw, digest=sha256(raw).digest()
+    )
 
 
 from dataclasses import dataclass
@@ -876,11 +1073,15 @@ _RAW_SCALAR_TYPES = frozenset((
 
 
 def _scalar_raw(value, wire_type, nullable):
-    """Pure E14/E28 scalar validation; unsupported raw kinds fail closed."""
+    """Exact immutable raw scalar validation; unsupported kinds fail closed."""
     if type(wire_type) is not WireType or wire_type not in _RAW_SCALAR_TYPES:
         _reject_validation()
     if wire_type is WireType.BYTEA and value is not None and type(value) is not bytes:
         _reject_validation()
+    if value is not None and wire_type is WireType.TIMESTAMPTZ:
+        return _instant_raw(value)
+    if value is not None and wire_type is WireType.UUID:
+        return _uuid_raw(value)
     return _scalar_core(value, wire_type, nullable, _reject=_reject_validation)
 
 
@@ -942,9 +1143,17 @@ def _validate_empty_context_fields(expected, readiness, *, _reject):
 
 def _validate_return_context(context, *, _reject=None):
     if _reject is not None:
-        _validate_empty_context_fields(
-            context.expected, context.readiness, _reject=_reject
-        )
+        if (
+            type(context.expected) is not tuple
+            or len(context.expected) > 1
+            or context.readiness is not None
+        ):
+            _reject_scalar(_reject)
+        from .models import _validate_admission_input_raw
+
+        for value in context.expected:
+            _validate_admission_input_raw(value)
+        return
     allowed = (AdmissionInput, EventInput, Fence, GuardRef, PublicationFence)
     if type(context.expected) is not tuple or len(context.expected) > 2:
         _reject_scalar(_reject)
@@ -977,8 +1186,7 @@ class _ReturnContextDraft:
 
 
 def _return_context_raw(*, expected=(), readiness=None):
-    """Construct only the selected empty context without a public boundary."""
-    _validate_empty_context_fields(expected, readiness, _reject=_reject_validation)
+    """Construct empty or one-admission context without a public boundary."""
     draft = _ReturnContextDraft(expected, readiness)
     _validate_return_context(draft, _reject=_reject_validation)
     context = object.__new__(ReturnContext)
@@ -1042,9 +1250,52 @@ def _constraint_raw(value, code):
     return _constraint(value, code, _reject=_reject_validation)
 
 
+def _admission_values_core(admission, *, _reject=None):
+    identifier_fn = _identifier if _reject is None else _identifier_raw
+    version_to_decimal_fn = (
+        version_to_decimal if _reject is None else _version_to_decimal_raw
+    )
+    canonical_intent_fn = canonical_intent if _reject is None else _canonical_intent_raw
+    identity = admission.identity
+    scope = identity.scope
+    return dict(
+        work_id=identity.work_id,
+        kind=identity.kind.value,
+        subscription_id=None
+        if identity.subscription_id is None
+        else identifier_fn(identity.subscription_id),
+        namespace=identifier_fn(identity.namespace),
+        command_type=identifier_fn(identity.command_type),
+        scope_evidence=scope.canonical,
+        idempotency_key=None
+        if identity.idempotency_key is None
+        else identifier_fn(identity.idempotency_key),
+        canonical_version=scope.canonical_version,
+        schema_version_decimal=version_to_decimal_fn(admission.schema_version),
+        scope_application=scope.application,
+        scope_tenant=scope.tenant,
+        scope_owner=scope.owner,
+        intent_evidence=canonical_intent_fn(admission).content,
+        semantic_input=admission.semantic_input,
+        replay_input=admission.replay_input,
+        protected_binding=admission.protected_binding,
+        replay_policy=admission.replay_policy.value,
+        max_attempts=admission.max_attempts,
+        deadline=admission.deadline,
+        original_available_at=admission.original_available_at,
+    )
+
+
+
 def _admission_values(admission):
-    identity=admission.identity;scope=identity.scope
-    return dict(work_id=identity.work_id,kind=identity.kind.value,subscription_id=None if identity.subscription_id is None else _identifier(identity.subscription_id),namespace=_identifier(identity.namespace),command_type=_identifier(identity.command_type),scope_evidence=scope.canonical,idempotency_key=None if identity.idempotency_key is None else _identifier(identity.idempotency_key),canonical_version=scope.canonical_version,schema_version_decimal=version_to_decimal(admission.schema_version),scope_application=scope.application,scope_tenant=scope.tenant,scope_owner=scope.owner,intent_evidence=canonical_intent(admission).content,semantic_input=admission.semantic_input,replay_input=admission.replay_input,protected_binding=admission.protected_binding,replay_policy=admission.replay_policy.value,max_attempts=admission.max_attempts,deadline=admission.deadline,original_available_at=admission.original_available_at)
+    return _admission_values_core(admission)
+
+
+def _admission_values_raw(admission, /):
+    from .models import _validate_admission_input_raw
+
+    _validate_admission_input_raw(admission)
+    return _admission_values_core(admission, _reject=_reject_validation)
 
 
 def _snapshot_sequence(values, maximum, *, _reject=None):
@@ -1228,3 +1479,62 @@ def _freeze_request_raw(statement, parameters, /, *, context):
     object.__setattr__(request, "parameters", frozen)
     object.__setattr__(request, "context", context)
     return request
+
+
+def _instant_raw(value):
+    if type(value) is not datetime or value.tzinfo is not timezone.utc:
+        _reject_validation()
+    return value
+
+
+def _uuid_raw(value):
+    from uuid import SafeUUID
+
+    if type(value) is not UUID:
+        _reject_validation()
+    if type(value.int) is not int or not 0 <= value.int < 2**128:
+        _reject_validation()
+    if not any(
+        value.is_safe is choice
+        for choice in (SafeUUID.safe, SafeUUID.unsafe, SafeUUID.unknown)
+    ):
+        _reject_validation()
+    return value
+
+
+@_boundary
+def canonical_protected_binding(material):
+    return _canonical_protected_binding_core(material)
+
+
+def _canonical_protected_binding_raw(material, /):
+    return _canonical_protected_binding_core(material, _reject=_reject_validation)
+
+
+@_boundary
+def decode_protected_binding(raw):
+    return _decode_protected_binding_core(raw)
+
+
+def _decode_protected_binding_raw(raw, /):
+    return _decode_protected_binding_core(raw, _reject=_reject_validation)
+
+
+@_boundary
+def canonical_intent(admission):
+    return _canonical_intent_core(admission)
+
+
+def _canonical_intent_raw(admission, /):
+    return _canonical_intent_core(admission, _reject=_reject_validation)
+
+
+def _protected_binding_input_raw(**values):
+    from types import SimpleNamespace
+
+    draft = SimpleNamespace(**values)
+    normalized = _normalize_material(draft, _reject=_reject_validation)
+    material = object.__new__(ProtectedBindingInput)
+    for name in ProtectedBindingInput.__dataclass_fields__:
+        object.__setattr__(material, name, normalized.get(name, values[name]))
+    return material

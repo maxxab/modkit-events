@@ -377,6 +377,7 @@ def _reserve_preparation_paid(execution, capacity, ledger, reservation):
         "borrows": 0,
         "x": None,
         "builder": reservation,
+        "profile": None,
     }
     x = None
     with _registry._synchronized():
@@ -410,14 +411,21 @@ def reserve_preparation(execution, capacity, /, *, execution_ledger):
     return token
 
 
-def _preparation_size(payload):
+def _preparation_size(payload, operation=None):
+    if operation is not None:
+        from .native_profile import _request_size
+
+        return _request_size(payload, operation)
     if type(payload) is bytes:
         return len(payload)
     if type(payload) is not FrozenRequest:
         _reject_validation()
     # Validate without replacing any part of the retained execution graph.
     _freeze_parameters(
-        payload.statement, payload.parameters, payload.context, _reject=_reject_validation
+        payload.statement,
+        payload.parameters,
+        payload.context,
+        _reject=_reject_validation,
     )
     return (
         getsizeof(payload)
@@ -428,12 +436,14 @@ def _preparation_size(payload):
     )
 
 
-def _set_preparation_paid(preparation, payload, ledger, reservation, *, unreturned=False):
+def _set_preparation_paid(
+    preparation, payload, ledger, reservation, *, unreturned=False, operation=None
+):
     """Validate and publish under existing D; known rejections return codes."""
     _require_paid_preparation(reservation, unreturned)
     code = None
     try:
-        size = _preparation_size(payload)
+        size = _preparation_size(payload, operation)
     except _ValidationReject as error:
         if type(error) is not _ValidationReject:
             raise
@@ -454,6 +464,7 @@ def _set_preparation_paid(preparation, payload, ledger, reservation, *, unreturn
                 code = ErrorCode.CAPACITY_EXCEEDED
             else:
                 record["data"] = payload
+                record["profile"] = operation
     record = None
     return code
 
@@ -1021,17 +1032,23 @@ def set_result(result, payload, /, *, execution_ledger):
     flag = _context(execution_ledger)
     _require_handles(flag, result)
     with _construction(flag):
-        code = request = record = None
+        code = request = record = operation = None
         with _registry._synchronized():
             record = _envelope(result, execution_ledger, "B")
             code = _result_publication_error(record, result)
             if code is None:
                 request = record["operation"]["prep"]["data"]
+                operation = record["operation"]["prep"].get("profile")
         record = None
         if code is None:
             try:
                 if type(request) is FrozenRequest:
-                    size = _typed_result_size(request, payload)
+                    if operation is None:
+                        size = _typed_result_size(request, payload)
+                    else:
+                        from .native_profile import _result_size
+
+                        size = _result_size(request, payload, operation)
                 elif type(payload) is bytes:
                     size = len(payload)
                 else:
@@ -1054,7 +1071,7 @@ def set_result(result, payload, /, *, execution_ledger):
                     else:
                         record["data"] = payload
                         record["populated"] = True
-        record = request = None
+        record = request = operation = None
     _reject(code, flag)
 
 
@@ -1507,3 +1524,70 @@ def acknowledge_root_end(receipt, /, *, execution_ledger):
 def _require_handles(flag, *values):
     if any(type(value) not in (_Handle, CommitResultReceipt) for value in values):
         _fail(ErrorCode.LOCAL_INVALID_ARGUMENT, unconfirmed=flag)
+
+
+def _prepare_component(execution, operation, logical_request, /, *, execution_ledger):
+    """One canonical D and fixed A, both paid before the trusted builder."""
+    from .native_profile import _preparation_capacity, _validate_operation
+
+    flag = _context(execution_ledger)
+    _require_handles(flag, execution)
+    with _construction(flag) as paid:
+        code = request = preparation = None
+        reserved = False
+        try:
+            _validate_operation(operation)
+            if type(logical_request) is not operation.request_type:
+                _reject_validation()
+            capacity = _preparation_capacity(operation)
+            preparation, code = _reserve_preparation_paid(
+                execution, capacity, execution_ledger, paid
+            )
+            reserved = code is None
+            if reserved:
+                request = operation.build_request(logical_request)
+                code = _set_preparation_paid(
+                    preparation,
+                    request,
+                    execution_ledger,
+                    paid,
+                    unreturned=True,
+                    operation=operation,
+                )
+        except _ValidationReject as error:
+            if type(error) is not _ValidationReject:
+                raise
+            code = ErrorCode.LOCAL_INVALID_ARGUMENT
+        request = None
+        if code is not None:
+            if reserved:
+                cleanup_code = _release_preparation_paid(
+                    preparation, execution_ledger, paid, unreturned=True
+                )
+                _reject(cleanup_code, flag)
+            preparation = None
+    _reject(code, flag)
+    return preparation
+
+
+def _operation_profile(ticket, ledger, /, *, reservation):
+    """Return only this live issuer's profile from the existing RUNNING A."""
+    flag = _context(ledger)
+    _require_handles(flag, ticket)
+    if not _reservation_live(reservation):
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=flag)
+    code = profile = None
+    with _registry._synchronized():
+        physical = _ticket(ticket, ledger)
+        if (
+            physical is None
+            or physical.operation.get("issuer") is not reservation
+            or physical.operation["state"] != "RUNNING"
+            or not physical.operation["running"]
+        ):
+            code = ErrorCode.INVALID_OBSERVATION
+        else:
+            profile = physical.operation["prep"].get("profile")
+        physical = None
+    _reject(code, flag)
+    return profile

@@ -28,7 +28,16 @@ rows=ModuleType('psycopg.rows'); rows.tuple_row=object()
 strings=ModuleType('psycopg.types.string')
 class BytesBinaryDumper:pass
 class ByteaBinaryLoader:pass
+class StrBinaryDumper:pass
+class UUIDBinaryDumper:pass
+class Int4BinaryDumper:pass
+class DatetimeBinaryDumper:pass
 strings.BytesBinaryDumper=BytesBinaryDumper;strings.ByteaBinaryLoader=ByteaBinaryLoader
+strings.StrBinaryDumper=StrBinaryDumper
+uuid_types=ModuleType('psycopg.types.uuid');uuid_types.UUIDBinaryDumper=UUIDBinaryDumper
+numeric_types=ModuleType('psycopg.types.numeric');numeric_types.Int4BinaryDumper=Int4BinaryDumper
+datetime_types=ModuleType('psycopg.types.datetime');datetime_types.DatetimeBinaryDumper=DatetimeBinaryDumper
+sys.modules.update({'psycopg.types.uuid':uuid_types,'psycopg.types.numeric':numeric_types,'psycopg.types.datetime':datetime_types})
 sys.modules.update({'psycopg':pg,'psycopg.rows':rows,
     'psycopg.types':ModuleType('psycopg.types'),'psycopg.types.string':strings})
 from modkit_events.persistence import native_sync as n

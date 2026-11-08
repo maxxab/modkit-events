@@ -578,3 +578,27 @@ def decode_event_rows(request,rows,/):
         from .errors import _fail,ErrorCode
         _fail(ErrorCode.SCHEMA_MISMATCH,unconfirmed=False)
     return result
+
+
+def _decode_work_observation_raw(values, /):
+    """Decode the complete fixed E15 prefix; no partial Work projections."""
+    columns = get_statement("E15").result.columns
+    if type(values) is not tuple or len(values) != 56:
+        _reject_validation()
+    values = tuple(
+        _wire_scalar_raw(value, col.wire_type, col.nullable)
+        for value, col in zip(values, columns)
+    )
+    data = dict(zip((col.name for col in columns), values))
+    present = data.pop("resolution_present")
+    resolution = {}
+    for name in tuple(data):
+        if name.startswith("resolution_record_"):
+            resolution[name[len("resolution_record_") :]] = data.pop(name)
+    if present:
+        data["resolution"] = O._resolution_observation_raw(**resolution)
+    else:
+        if any(value is not None for value in resolution.values()):
+            _reject_validation()
+        data["resolution"] = None
+    return O._work_observation_raw(**data)

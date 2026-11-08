@@ -1,14 +1,20 @@
-"""Optional fixed E14/E28 issuer on the original caller-owned managed root.
+"""Optional fixed E14/E28 and W01/W02 issuer on the original caller-owned managed root.
 
 Cooperative fresh/unpooled psycopg 3.3.8, libpq 180006 profile. No nested/raw
 transaction bypass, global/custom adapter changes, concurrent direct connection
 use, or endpoint/schema replacement. No automatic finalization or replay.
 """
 
+from datetime import datetime
+from uuid import UUID
+
 import psycopg
 from psycopg import pq
 from psycopg.rows import tuple_row
-from psycopg.types.string import ByteaBinaryLoader, BytesBinaryDumper
+from psycopg.types.datetime import DatetimeBinaryDumper
+from psycopg.types.numeric import Int4BinaryDumper
+from psycopg.types.string import ByteaBinaryLoader, BytesBinaryDumper, StrBinaryDumper
+from psycopg.types.uuid import UUIDBinaryDumper
 
 from . import managed_lifecycle as _managed
 from . import native_sync as _native
@@ -59,11 +65,18 @@ def prepare(execution, statement, parameters, /, *, execution_ledger):
     return preparation
 
 
+def prepare_component(execution, operation, logical_request, /, *, execution_ledger):
+    """Use the existing controller's one-D, reserve-before-builder boundary."""
+    return _managed._prepare_component(
+        execution, operation, logical_request, execution_ledger=execution_ledger
+    )
+
+
 def _invalid():
     _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
 
 
-def _materialize(cursor, request, descriptor):
+def _materialize(cursor, request, descriptor, operation=None):
     """Validate fixed metadata and SQL caps before copying the bounded row."""
     result = cursor.pgresult
     if (
@@ -93,6 +106,7 @@ def _materialize(cursor, request, descriptor):
         ):
             _invalid()
     value = None
+    rows = ()
     if count:
         cap = result.get_value(0, 0)
         if type(cap) is not bytes or cap != b"\x01":
@@ -102,18 +116,30 @@ def _materialize(cursor, request, descriptor):
         # access or post-copy length check masquerades as a pre-copy proof.
         copied = (cap,) + tuple(result.get_value(0, i) for i in range(1, result.nfields))
         try:
-            decoded = _decode_binary_transport_row(request.statement, copied)
-            value = (
-                decoded[0]
-                if request.statement is get_statement("E14")
-                else _decode_outbox_raw(decoded)
-            )
+            decoded = _decode_binary_transport_row(request.statement, copied, operation)
+            if operation is not None:
+                rows = (decoded,)
+            else:
+                value = (
+                    decoded[0]
+                    if request.statement is get_statement("E14")
+                    else _decode_outbox_raw(decoded)
+                )
         except _ValidationReject as error:
             if type(error) is not _ValidationReject:
                 raise
             _invalid()
     if cursor.nextset() is not None:
         _invalid()
+    if operation is not None:
+        try:
+            # Decode the whole bounded result under the issuer's existing D.
+            # Never publish primitive transport rows, including the absent case.
+            value = operation.decode_rows(request, rows)
+        except _ValidationReject as error:
+            if type(error) is not _ValidationReject:
+                raise
+            _invalid()
     return value
 
 
@@ -133,17 +159,19 @@ def execute(ticket, result, /, *, execution_ledger):
     """Populate the reserved result on the caller root, without finalizing it.
 
     The caller must reserve one result before this call (64 bytes for E14 or
-    4 MiB for every valid E28 row). Read it through managed read_result after
-    return. Capacity/setter rejection after execution is held, not retryable.
+    4 MiB for every valid E28 row; Workers exports its fixed typed capacities).
+    Read it through managed read_result after return. Capacity/setter rejection
+    after execution is held, not retryable.
     """
     flag = _native._shape(ticket, execution_ledger)
     primary = expected = None
     with _managed._construction(flag) as paid:
         started = close_attempted = False
-        actual = original = cursor = request = descriptor = value = None
+        actual = original = cursor = request = operation = descriptor = value = None
         try:
             request = _managed._start_operation(ticket, result, execution_ledger, reservation=paid)
             started = True
+            operation = _managed._operation_profile(ticket, execution_ledger, reservation=paid)
             actual, original = _native._borrow(ticket, execution_ledger)
             if (
                 psycopg.__version__ != "3.3.8"
@@ -151,15 +179,25 @@ def execute(ticket, result, /, *, execution_ledger):
                 or not _native._live(actual, original, (pq.TransactionStatus.INTRANS,))
             ):
                 _fail(ErrorCode.PROFILE_REJECTED, unconfirmed=True)
-            descriptor = _selected_sql_descriptor(request.statement)
+            try:
+                descriptor = _selected_sql_descriptor(request.statement, operation)
+            except _ValidationReject as error:
+                if type(error) is not _ValidationReject:
+                    raise
+                _invalid()
             cursor = psycopg.RawCursor(actual, row_factory=tuple_row)
             cursor.adapters.register_dumper(bytes, BytesBinaryDumper)
+            cursor.adapters.register_dumper(UUID, UUIDBinaryDumper)
+            cursor.adapters.register_dumper(str, StrBinaryDumper)
+            # All integer inputs of this closed profile are explicit INT4.
+            cursor.adapters.register_dumper(int, Int4BinaryDumper)
+            cursor.adapters.register_dumper(datetime, DatetimeBinaryDumper)
             for column in descriptor.transport_columns:
                 cursor.adapters.register_loader(column.oid, ByteaBinaryLoader)
             cursor.execute(descriptor.sql, request.parameters, prepare=False, binary=True)
             if not _native._live(actual, original, (pq.TransactionStatus.INTRANS,)):
                 _invalid()
-            value = _materialize(cursor, request, descriptor)
+            value = _materialize(cursor, request, descriptor, operation)
             close_attempted = True
             cursor.close()
             cursor = None
@@ -203,6 +241,6 @@ def execute(ticket, result, /, *, execution_ledger):
                         # still causes outer construction containment.
                         pass
                 _native._raise_primary(primary)
-        actual = original = cursor = request = descriptor = value = primary = None
+        actual = original = cursor = request = operation = descriptor = value = primary = None
     if expected is not None:
         _native._raise_primary(expected)

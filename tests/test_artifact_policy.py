@@ -65,6 +65,7 @@ modkit_events/persistence/migrations.py
 modkit_events/persistence/models.py
 modkit_events/persistence/native_codec.py
 modkit_events/persistence/native_execution.py
+modkit_events/persistence/native_profile.py
 modkit_events/persistence/native_sync.py
 modkit_events/persistence/observations.py
 modkit_events/persistence/resource_lifecycle.py
@@ -145,8 +146,12 @@ tests/test_core.py
 tests/test_isolation.py
 tests/test_managed_lifecycle.py
 tests/test_managed_statement_lifecycle.py
+tests/test_managed_workers_lifecycle.py
 tests/test_native_binary_transport.py
 tests/test_native_execution.py
+tests/test_native_workers_codec.py
+tests/test_native_workers_execution.py
+tests/test_native_workers_profile.py
 tests/native/test_native_observation_integration.py
 tests/test_native_sql_descriptor.py
 tests/test_outbox.py

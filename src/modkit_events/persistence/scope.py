@@ -76,13 +76,13 @@ class Scope:
             _encode_field(self.owner)
 
 
-def _fields(scope: Scope) -> tuple[bytes, bytes | None, bytes | None]:
+def _fields(scope: Scope, *, _reject=None) -> tuple[bytes, bytes | None, bytes | None]:
     if type(scope) is not Scope:
-        raise ValueError
+        _reject_field(_reject)
     return (
-        _encode_field(scope.application),
-        None if scope.tenant is None else _encode_field(scope.tenant),
-        None if scope.owner is None else _encode_field(scope.owner),
+        _encode_field(scope.application, _reject=_reject),
+        None if scope.tenant is None else _encode_field(scope.tenant, _reject=_reject),
+        None if scope.owner is None else _encode_field(scope.owner, _reject=_reject),
     )
 
 
@@ -123,10 +123,9 @@ def decode_scope_fields(
     )
 
 
-@_scope_boundary
-def canonical_scope(scope: Scope) -> bytes:
+def _canonical_scope_core(scope: Scope, *, _reject=None) -> bytes:
     """Encode the sole NEW scope frame: MKSC + version1 + lengths/presence."""
-    application, tenant, owner = _fields(scope)
+    application, tenant, owner = _fields(scope, _reject=_reject)
     parts = [_HEADER, len(application).to_bytes(2, "big"), application]
     for value in (tenant, owner):
         if value is None:
@@ -136,40 +135,105 @@ def canonical_scope(scope: Scope) -> bytes:
     return b"".join(parts)
 
 
-@_scope_boundary
-def decode_canonical_scope(raw: bytes) -> Scope:
+def _decode_canonical_scope_core(raw: bytes, *, _reject=None) -> Scope:
     """Require one unique strict frame with no trailing data or alternate version."""
     if type(raw) is not bytes or not 10 <= len(raw) <= 781 or raw[:5] != _HEADER:
-        raise ValueError
+        _reject_field(_reject)
     position = 5
 
     def present() -> bytes:
         nonlocal position
         if position + 2 > len(raw):
-            raise ValueError
-        length = int.from_bytes(raw[position:position + 2], "big")
+            _reject_field(_reject)
+        length = int.from_bytes(raw[position : position + 2], "big")
         position += 2
         if not 1 <= length <= 256 or position + length > len(raw):
-            raise ValueError
-        value = raw[position:position + length]
+            _reject_field(_reject)
+        value = raw[position : position + length]
         position += length
         return value
 
     def optional() -> bytes | None:
         nonlocal position
         if position >= len(raw):
-            raise ValueError
+            _reject_field(_reject)
         tag = raw[position]
         position += 1
         if tag == 0:
             return None
         if tag != 1:
-            raise ValueError
+            _reject_field(_reject)
         return present()
 
     application = present()
     tenant = optional()
     owner = optional()
     if position != len(raw):
-        raise ValueError
-    return decode_scope_fields(application, tenant, owner)
+        _reject_field(_reject)
+    return (decode_scope_fields if _reject is None else _decode_scope_fields_raw)(
+        application, tenant, owner
+    )
+
+
+@_scope_boundary
+def canonical_scope(scope: Scope) -> bytes:
+    return _canonical_scope_core(scope)
+
+
+@_scope_boundary
+def decode_canonical_scope(raw: bytes) -> Scope:
+    return _decode_canonical_scope_core(raw)
+
+
+def _scope_raw(
+    application: str, tenant: str | None = None, owner: str | None = None
+) -> Scope:
+    from .errors import _reject_validation
+
+    for value in (application, tenant, owner):
+        if value is not None:
+            _encode_field(value, _reject=_reject_validation)
+    if application is None:
+        _reject_validation()
+    result = object.__new__(Scope)
+    object.__setattr__(result, "application", application)
+    object.__setattr__(result, "tenant", tenant)
+    object.__setattr__(result, "owner", owner)
+    return result
+
+
+def _encode_scope_fields_raw(
+    scope: Scope, /
+) -> tuple[bytes, bytes | None, bytes | None]:
+    from .errors import _reject_validation
+
+    return _fields(scope, _reject=_reject_validation)
+
+
+def _decode_scope_fields_raw(
+    application: bytes, tenant: bytes | None = None, owner: bytes | None = None
+) -> Scope:
+    from .bindings import _decode_utf8
+    from .errors import _reject_validation
+
+    decoded = []
+    for index, value in enumerate((application, tenant, owner)):
+        if value is None and index:
+            decoded.append(None)
+        else:
+            if type(value) is not bytes or not 1 <= len(value) <= 256:
+                _reject_validation()
+            decoded.append(_decode_utf8(value, _reject=_reject_validation))
+    return _scope_raw(*decoded)
+
+
+def _canonical_scope_raw(scope: Scope, /) -> bytes:
+    from .errors import _reject_validation
+
+    return _canonical_scope_core(scope, _reject=_reject_validation)
+
+
+def _decode_canonical_scope_raw(raw: bytes, /) -> Scope:
+    from .errors import _reject_validation
+
+    return _decode_canonical_scope_core(raw, _reject=_reject_validation)

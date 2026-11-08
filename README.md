@@ -21,8 +21,9 @@ These are separate, generic packages for any application. The dependency is
 one-way: Workers requires Events; Events never requires Workers, including for
 its supported optional adapters, default tests and Events-only migration path.
 The reference application is not a package dependency.
-Cross-package integration tests live in Workers. Unfinished native PostgreSQL
-migrations and adapters remain unqualified.
+Workers owns its consumer integration tests. Events also has explicitly selected
+Workers companion tests; its default tests remain Workers-independent. Native
+PostgreSQL migrations and adapters remain unqualified for release.
 
 The base package has no runtime dependencies. Adapters import only when explicitly
 requested. SQLAlchemy currently supports **SQLite 3.35+ only**; other dialects
@@ -196,6 +197,42 @@ A broker may have accepted a publish even if its response was lost: recovery can
 republish. Choose a lease longer than normal operation and still design for that
 crash window. Lease expiry during publish can overlap another owner. There is no
 cross-broker/database transaction and no implicit lease-renewal service.
+
+## Native PostgreSQL transport status
+
+**Source implementation complete; native qualification incomplete (NOT_READY).**
+The W01 submission and W02 status extension has passed independent source review
+and focused source validation. It uses the existing Events controller and the
+caller's original READ COMMITTED root, with fixed statement profiles, bounded
+request/context retention, and fully validated typed results. It adds no second
+controller or Events dependency on Workers. This does not qualify W03-W05 or a
+generic native transport.
+
+Workers selects the extension through its `prepare_submit` and `prepare_read_job`
+wrappers. Admission, result reservation, execution and release remain explicit.
+`read_result` borrows a still-charged value; the caller must end all borrowed
+references before releasing the result. Successful statement execution is not
+commit acknowledgement.
+
+The real W01/W02 qualification attempt did **not** pass. Initial submission, a
+complete protected-record read and a missing read returned before an identical
+duplicate submission hit the 20-second statement timeout with a 256 KiB payload
+string. The server trace reached the existing `_json_string_chunks` path through
+E15 during W01. SQL performance investigation is separate from this transport
+source change. Remaining normal assertions, explicit rollback/commit cases,
+key-conflict and ID-conflict cases did not run; complete adapter and diagnostic
+qualification was not established.
+
+Read-only reconciliation afterward found no work, payload, history or business
+rows, prepared transactions, or other database clients. That aftermath is not a
+passed transaction test or a controller cleanup/refund receipt. Existing E14/E28
+qualification remains separate; this extension does not expand its claims.
+Installation, final grants/manifests and release readiness remain unqualified.
+
+Companion source checks require `MODKIT_EVENTS_WORKERS_TESTS=1` and an installed
+Workers package or an explicit Workers source `PYTHONPATH`. Unselected companion
+cases skip; selected missing or broken imports fail. Events-only checks remain
+active. Source tests do not substitute for the incomplete real-driver proof.
 
 ## Development and verification
 

@@ -97,23 +97,7 @@ class ResolutionObservation:
 
     @_observation_boundary
     def __post_init__(self):
-        if any(type(x) is not UUID for x in (self.operation_id,self.work_id,self.dispatch_id)):raise ValueError
-        from .catalog import MUTATION_OPERATION_KINDS
-        if type(self.operation_kind) is not str or self.operation_kind != MUTATION_OPERATION_KINDS['E31'].value:raise ValueError
-        if type(self.outcome) is not str:raise ValueError
-        _integer(self.expected_revision,0,2**63-1);_integer(self.cycle,1,1);_integer(self.attempt,1,1000);_integer(self.resolution_root_xid,1,2**64-1)
-        for name in ('evidence','binding'):object.__setattr__(self,name,_bytes(getattr(self,name)))
-        object.__setattr__(self,'recorded_at',_instant(self.recorded_at))
-        if self.retry_at is not None:object.__setattr__(self,'retry_at',_instant(self.retry_at))
-        if self.result is not None:object.__setattr__(self,'result',_bytes(self.result))
-        if self.result_digest is not None:object.__setattr__(self,'result_digest',_bytes(self.result_digest,32))
-        if self.outcome not in ('confirmed_success','confirmed_rejection','confirmed_cancelled','safe_retry'):raise ValueError
-        if (self.outcome=='safe_retry')!=(self.retry_at is not None):raise ValueError
-        if self.outcome=='confirmed_success':
-            if self.result is None or self.result_digest!=sha256(self.result).digest():raise ValueError
-        elif self.result is not None or self.result_digest is not None:raise ValueError
-        # E31 has no submitted reason; reconcile_* reasons belong to work history.
-        if self.reason is not None:raise ValueError
+        _validate_resolution_observation_core(self)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -161,62 +145,7 @@ class WorkObservation:
 
     @_observation_boundary
     def __post_init__(self):
-        if type(self.work_id) is not UUID or type(self.cancellation_requested) is not bool:raise ValueError
-        if any(type(value) is not str for value in (self.kind,self.state,self.replay_policy)):raise ValueError
-        if self.success_origin is not None and type(self.success_origin) is not str:raise ValueError
-        for name in ('token','dispatch_id','completion_guard_id','resolution_operation_id','terminal_resolution_operation_id'):
-            value=getattr(self,name)
-            if value is not None and type(value) is not UUID:raise ValueError
-        for name in ('namespace','command_type','schema_version_decimal','scope_evidence','scope_application','intent_evidence','semantic_input','replay_input','protected_binding'):
-            object.__setattr__(self,name,_bytes(getattr(self,name)))
-        for name in ('subscription_id','scope_tenant','scope_owner','idempotency_key','result','completion_result_digest'):
-            value=getattr(self,name)
-            if value is not None:object.__setattr__(self,name,_bytes(value))
-        for name in ('original_available_at','available_at','created_at','updated_at'):
-            object.__setattr__(self,name,_instant(getattr(self,name)))
-        for name in ('deadline','lease_until','final_fence_at'):
-            value=getattr(self,name)
-            if value is not None:object.__setattr__(self,name,_instant(value))
-        version=version_from_decimal(self.schema_version_decimal)
-        if self.runnable_version is not None:
-            _integer(self.runnable_version,1,2147483647)
-            if self.runnable_version!=version:raise ValueError
-        if version>2147483647 and self.runnable_version is not None:raise ValueError
-        scope=ScopeEvidence(canonical_version=self.canonical_version,canonical=self.scope_evidence,application=self.scope_application,tenant=self.scope_tenant,owner=self.scope_owner)
-        identity=WorkIdentity(work_id=self.work_id,kind=WorkKind(self.kind),subscription_id=None if self.subscription_id is None else self.subscription_id.decode('utf8'),namespace=self.namespace.decode('utf8'),command_type=self.command_type.decode('utf8'),scope=scope,idempotency_key=None if self.idempotency_key is None else self.idempotency_key.decode('utf8'))
-        admission=AdmissionInput(identity=identity,schema_version=version,semantic_input=self.semantic_input,replay_input=self.replay_input,protected_binding=self.protected_binding,replay_policy=ReplayPolicy(self.replay_policy),max_attempts=self.max_attempts,deadline=self.deadline,original_available_at=self.original_available_at)
-        if canonical_intent(admission).content!=self.intent_evidence:raise ValueError
-        _integer(self.ownership_revision,0,2**63-1);_integer(self.cycle,1,1);_integer(self.attempt_count,0,self.max_attempts)
-        if self.state not in ('queued','claimed','running','retry_waiting','succeeded','failed','expired','cancelled','blocked_schema','held'):raise ValueError
-        owned=self.state in ('claimed','running')
-        # Cancellation terminalizes predispatch work or holds dispatched work.
-        if self.cancellation_requested and self.state in ('queued','claimed','running','retry_waiting','blocked_schema'):
-            raise ValueError
-        if self.state=='claimed' and self.attempt_count>=self.max_attempts:raise ValueError
-        if owned!=(self.token is not None) or owned!=(self.lease_until is not None):raise ValueError
-        if owned and self.ownership_revision<1:raise ValueError
-        if self.state in ('queued','claimed','retry_waiting','blocked_schema') and self.dispatch_id is not None:raise ValueError
-        if self.state in ('running','held','succeeded') and (self.dispatch_id is None or self.attempt_count<1):raise ValueError
-        if self.dispatch_id is not None and self.attempt_count<1:raise ValueError
-        if self.state in ('queued','claimed','running','retry_waiting') and self.runnable_version is None:raise ValueError
-        if self.deadline is not None and self.lease_until is not None and self.lease_until>self.deadline:raise ValueError
-        if self.resolution is not None:
-            if type(self.resolution) is not ResolutionObservation:raise ValueError
-            self.resolution.__post_init__()
-            r=self.resolution
-            if (r.work_id,r.cycle,r.attempt,r.dispatch_id)!=(self.work_id,self.cycle,self.attempt_count,self.dispatch_id) or self.terminal_resolution_operation_id!=r.operation_id:raise ValueError
-        if self.state=='succeeded':
-            if self.result is None:raise ValueError
-            if self.success_origin=='guarded':
-                if self.completion_guard_id is None or self.final_fence_at is None or self.completion_result_digest!=sha256(self.result).digest() or self.resolution_operation_id is not None or self.terminal_resolution_operation_id is not None or self.resolution is not None:raise ValueError
-            elif self.success_origin=='reconciled':
-                if any(x is not None for x in (self.completion_guard_id,self.final_fence_at,self.completion_result_digest)) or self.resolution is None or self.resolution.outcome!='confirmed_success' or self.resolution_operation_id!=self.resolution.operation_id or self.resolution.result!=self.result:raise ValueError
-            else:raise ValueError
-        else:
-            if any(x is not None for x in (self.success_origin,self.completion_guard_id,self.final_fence_at,self.completion_result_digest,self.resolution_operation_id,self.result)):raise ValueError
-            if self.terminal_resolution_operation_id is not None:
-                if self.resolution is None or (self.state,self.resolution.outcome) not in (('failed','confirmed_rejection'),('cancelled','confirmed_cancelled')):raise ValueError
-            elif self.resolution is not None:raise ValueError
+        _validate_work_observation_core(self)
 
     @property
     def schema_version(self):
@@ -482,3 +411,375 @@ class ScanPage(Generic[_T]):
         if type(self.next_cursor) is bytes and len(self.next_cursor)!=32:raise ValueError
         # Concrete item ownership/type/identity validation is done by its decoder;
         # the generic page is an observation carrier, never execution authority.
+
+
+def _validate_resolution_observation_core(self, *, _reject=None):
+    from .bindings import _reject_scalar
+    from .models import _retain_field
+
+    _bytes_fn, _integer_fn, _instant_fn = _bytes, _integer, _instant
+    if _reject is not None:
+        from .bindings import _bytes_raw, _instant_raw, _integer_raw, _uuid_raw
+
+        _bytes_fn, _integer_fn, _instant_fn = _bytes_raw, _integer_raw, _instant_raw
+        for value in (self.operation_id, self.work_id, self.dispatch_id):
+            _uuid_raw(value)
+    if any(
+        type(x) is not UUID for x in (self.operation_id, self.work_id, self.dispatch_id)
+    ):
+        _reject_scalar(_reject)
+    from .catalog import MUTATION_OPERATION_KINDS
+
+    if (
+        type(self.operation_kind) is not str
+        or self.operation_kind != MUTATION_OPERATION_KINDS["E31"].value
+    ):
+        _reject_scalar(_reject)
+    if type(self.outcome) is not str:
+        _reject_scalar(_reject)
+    _integer_fn(self.expected_revision, 0, 2**63 - 1)
+    _integer_fn(self.cycle, 1, 1)
+    _integer_fn(self.attempt, 1, 1000)
+    _integer_fn(self.resolution_root_xid, 1, 2**64 - 1)
+    for name in ("evidence", "binding"):
+        _retain_field(self, name, _bytes_fn(getattr(self, name)), _reject=_reject)
+    _retain_field(self, "recorded_at", _instant_fn(self.recorded_at), _reject=_reject)
+    if self.retry_at is not None:
+        _retain_field(self, "retry_at", _instant_fn(self.retry_at), _reject=_reject)
+    if self.result is not None:
+        _retain_field(self, "result", _bytes_fn(self.result), _reject=_reject)
+    if self.result_digest is not None:
+        _retain_field(
+            self, "result_digest", _bytes_fn(self.result_digest, 32), _reject=_reject
+        )
+    if self.outcome not in (
+        "confirmed_success",
+        "confirmed_rejection",
+        "confirmed_cancelled",
+        "safe_retry",
+    ):
+        _reject_scalar(_reject)
+    if (self.outcome == "safe_retry") != (self.retry_at is not None):
+        _reject_scalar(_reject)
+    if self.outcome == "confirmed_success":
+        if self.result is None or self.result_digest != sha256(self.result).digest():
+            _reject_scalar(_reject)
+    elif self.result is not None or self.result_digest is not None:
+        _reject_scalar(_reject)
+    # E31 has no submitted reason; reconcile_* reasons belong to work history.
+    if self.reason is not None:
+        _reject_scalar(_reject)
+
+
+def _validate_work_observation_core(self, *, _reject=None):
+    from .bindings import _reject_scalar
+    from .models import _retain_field
+
+    _bytes_fn, _integer_fn, _instant_fn = _bytes, _integer, _instant
+    if _reject is not None:
+        from .bindings import _bytes_raw, _instant_raw, _integer_raw, _uuid_raw
+
+        _bytes_fn, _integer_fn, _instant_fn = _bytes_raw, _integer_raw, _instant_raw
+        for name in (
+            "work_id",
+            "token",
+            "dispatch_id",
+            "completion_guard_id",
+            "resolution_operation_id",
+            "terminal_resolution_operation_id",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _uuid_raw(value)
+    version_fn, scope_fn, identity_fn, admission_fn, intent_fn = (
+        version_from_decimal,
+        ScopeEvidence,
+        WorkIdentity,
+        AdmissionInput,
+        canonical_intent,
+    )
+
+    def decode_text(value):
+        return value.decode("utf8")
+
+    if _reject is not None:
+        from .bindings import (
+            _canonical_intent_raw,
+            _decode_utf8,
+            _version_from_decimal_raw,
+        )
+        from .models import (
+            _admission_input_raw,
+            _scope_evidence_raw,
+            _work_identity_raw,
+        )
+
+        version_fn, scope_fn, identity_fn, admission_fn, intent_fn = (
+            _version_from_decimal_raw,
+            _scope_evidence_raw,
+            _work_identity_raw,
+            _admission_input_raw,
+            _canonical_intent_raw,
+        )
+
+        def decode_text(value):
+            return _decode_utf8(value, _reject=_reject)
+
+        if (
+            type(self.kind) is not str
+            or self.kind != "job"
+            or type(self.replay_policy) is not str
+            or self.replay_policy not in ("disabled", "application_safe")
+        ):
+            _reject_scalar(_reject)
+    if type(self.work_id) is not UUID or type(self.cancellation_requested) is not bool:
+        _reject_scalar(_reject)
+    if any(
+        type(value) is not str for value in (self.kind, self.state, self.replay_policy)
+    ):
+        _reject_scalar(_reject)
+    if self.success_origin is not None and type(self.success_origin) is not str:
+        _reject_scalar(_reject)
+    for name in (
+        "token",
+        "dispatch_id",
+        "completion_guard_id",
+        "resolution_operation_id",
+        "terminal_resolution_operation_id",
+    ):
+        value = getattr(self, name)
+        if value is not None and type(value) is not UUID:
+            _reject_scalar(_reject)
+    for name in (
+        "namespace",
+        "command_type",
+        "schema_version_decimal",
+        "scope_evidence",
+        "scope_application",
+        "intent_evidence",
+        "semantic_input",
+        "replay_input",
+        "protected_binding",
+    ):
+        _retain_field(self, name, _bytes_fn(getattr(self, name)), _reject=_reject)
+    for name in (
+        "subscription_id",
+        "scope_tenant",
+        "scope_owner",
+        "idempotency_key",
+        "result",
+        "completion_result_digest",
+    ):
+        value = getattr(self, name)
+        if value is not None:
+            _retain_field(self, name, _bytes_fn(value), _reject=_reject)
+    for name in ("original_available_at", "available_at", "created_at", "updated_at"):
+        _retain_field(self, name, _instant_fn(getattr(self, name)), _reject=_reject)
+    for name in ("deadline", "lease_until", "final_fence_at"):
+        value = getattr(self, name)
+        if value is not None:
+            _retain_field(self, name, _instant_fn(value), _reject=_reject)
+    version = version_fn(self.schema_version_decimal)
+    if self.runnable_version is not None:
+        _integer_fn(self.runnable_version, 1, 2147483647)
+        if self.runnable_version != version:
+            _reject_scalar(_reject)
+    if version > 2147483647 and self.runnable_version is not None:
+        _reject_scalar(_reject)
+    scope = scope_fn(
+        canonical_version=self.canonical_version,
+        canonical=self.scope_evidence,
+        application=self.scope_application,
+        tenant=self.scope_tenant,
+        owner=self.scope_owner,
+    )
+    identity = identity_fn(
+        work_id=self.work_id,
+        kind=WorkKind(self.kind),
+        subscription_id=None
+        if self.subscription_id is None
+        else decode_text(self.subscription_id),
+        namespace=decode_text(self.namespace),
+        command_type=decode_text(self.command_type),
+        scope=scope,
+        idempotency_key=None
+        if self.idempotency_key is None
+        else decode_text(self.idempotency_key),
+    )
+    admission = admission_fn(
+        identity=identity,
+        schema_version=version,
+        semantic_input=self.semantic_input,
+        replay_input=self.replay_input,
+        protected_binding=self.protected_binding,
+        replay_policy=ReplayPolicy(self.replay_policy),
+        max_attempts=self.max_attempts,
+        deadline=self.deadline,
+        original_available_at=self.original_available_at,
+    )
+    if intent_fn(admission).content != self.intent_evidence:
+        _reject_scalar(_reject)
+    _integer_fn(self.ownership_revision, 0, 2**63 - 1)
+    _integer_fn(self.cycle, 1, 1)
+    _integer_fn(self.attempt_count, 0, self.max_attempts)
+    if self.state not in (
+        "queued",
+        "claimed",
+        "running",
+        "retry_waiting",
+        "succeeded",
+        "failed",
+        "expired",
+        "cancelled",
+        "blocked_schema",
+        "held",
+    ):
+        _reject_scalar(_reject)
+    owned = self.state in ("claimed", "running")
+    # Cancellation terminalizes predispatch work or holds dispatched work.
+    if self.cancellation_requested and self.state in (
+        "queued",
+        "claimed",
+        "running",
+        "retry_waiting",
+        "blocked_schema",
+    ):
+        _reject_scalar(_reject)
+    if self.state == "claimed" and self.attempt_count >= self.max_attempts:
+        _reject_scalar(_reject)
+    if owned != (self.token is not None) or owned != (self.lease_until is not None):
+        _reject_scalar(_reject)
+    if owned and self.ownership_revision < 1:
+        _reject_scalar(_reject)
+    if (
+        self.state in ("queued", "claimed", "retry_waiting", "blocked_schema")
+        and self.dispatch_id is not None
+    ):
+        _reject_scalar(_reject)
+    if self.state in ("running", "held", "succeeded") and (
+        self.dispatch_id is None or self.attempt_count < 1
+    ):
+        _reject_scalar(_reject)
+    if self.dispatch_id is not None and self.attempt_count < 1:
+        _reject_scalar(_reject)
+    if (
+        self.state in ("queued", "claimed", "running", "retry_waiting")
+        and self.runnable_version is None
+    ):
+        _reject_scalar(_reject)
+    if (
+        self.deadline is not None
+        and self.lease_until is not None
+        and self.lease_until > self.deadline
+    ):
+        _reject_scalar(_reject)
+    if self.resolution is not None:
+        if type(self.resolution) is not ResolutionObservation:
+            _reject_scalar(_reject)
+        _validate_resolution_observation_core(self.resolution, _reject=_reject)
+        r = self.resolution
+        if (r.work_id, r.cycle, r.attempt, r.dispatch_id) != (
+            self.work_id,
+            self.cycle,
+            self.attempt_count,
+            self.dispatch_id,
+        ) or self.terminal_resolution_operation_id != r.operation_id:
+            _reject_scalar(_reject)
+    if self.state == "succeeded":
+        if self.result is None:
+            _reject_scalar(_reject)
+        if self.success_origin == "guarded":
+            if (
+                self.completion_guard_id is None
+                or self.final_fence_at is None
+                or self.completion_result_digest != sha256(self.result).digest()
+                or self.resolution_operation_id is not None
+                or self.terminal_resolution_operation_id is not None
+                or self.resolution is not None
+            ):
+                _reject_scalar(_reject)
+        elif self.success_origin == "reconciled":
+            if (
+                any(
+                    x is not None
+                    for x in (
+                        self.completion_guard_id,
+                        self.final_fence_at,
+                        self.completion_result_digest,
+                    )
+                )
+                or self.resolution is None
+                or self.resolution.outcome != "confirmed_success"
+                or self.resolution_operation_id != self.resolution.operation_id
+                or self.resolution.result != self.result
+            ):
+                _reject_scalar(_reject)
+        else:
+            _reject_scalar(_reject)
+    else:
+        if any(
+            x is not None
+            for x in (
+                self.success_origin,
+                self.completion_guard_id,
+                self.final_fence_at,
+                self.completion_result_digest,
+                self.resolution_operation_id,
+                self.result,
+            )
+        ):
+            _reject_scalar(_reject)
+        if self.terminal_resolution_operation_id is not None:
+            if self.resolution is None or (self.state, self.resolution.outcome) not in (
+                ("failed", "confirmed_rejection"),
+                ("cancelled", "confirmed_cancelled"),
+            ):
+                _reject_scalar(_reject)
+        elif self.resolution is not None:
+            _reject_scalar(_reject)
+
+
+def _validate_resolution_observation_raw(value, /):
+    from .errors import _reject_validation
+
+    if type(value) is not ResolutionObservation:
+        _reject_validation()
+    _validate_resolution_observation_core(value, _reject=_reject_validation)
+
+
+def _resolution_observation_raw(**values):
+    from types import SimpleNamespace
+
+    from .errors import _reject_validation
+
+    if set(values) != set(ResolutionObservation.__dataclass_fields__):
+        _reject_validation()
+    draft = SimpleNamespace(**values)
+    _validate_resolution_observation_core(draft, _reject=_reject_validation)
+    value = object.__new__(ResolutionObservation)
+    for name in ResolutionObservation.__dataclass_fields__:
+        object.__setattr__(value, name, values[name])
+    return value
+
+
+def _validate_work_observation_raw(value, /):
+    from .errors import _reject_validation
+
+    if type(value) is not WorkObservation:
+        _reject_validation()
+    _validate_work_observation_core(value, _reject=_reject_validation)
+
+
+def _work_observation_raw(**values):
+    from types import SimpleNamespace
+
+    from .errors import _reject_validation
+
+    if set(values) != set(WorkObservation.__dataclass_fields__):
+        _reject_validation()
+    draft = SimpleNamespace(**values)
+    _validate_work_observation_core(draft, _reject=_reject_validation)
+    value = object.__new__(WorkObservation)
+    for name in WorkObservation.__dataclass_fields__:
+        object.__setattr__(value, name, values[name])
+    return value
