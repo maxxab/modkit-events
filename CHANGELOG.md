@@ -12,6 +12,7 @@
 - **sql:** add bounded publication history reader (`286db7d4dd6a`)
 - **sql:** add bounded publication claims (`51238410d020`)
 - **sql:** add fenced publication renewal (`af00ea6dd3b8`)
+- **sql:** persist fenced publication intent (`4fcbb669b9d1`)
 
 ### Bug Fixes
 
