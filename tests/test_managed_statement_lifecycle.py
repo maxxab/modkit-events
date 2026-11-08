@@ -511,3 +511,50 @@ def test_uuid_public_integer_backing_rejects_subclasses_before_size_callbacks():
     assert calls==[] and not old._domain.stopped
     print('MANAGED_BODY_COMPLETE')
     """)
+
+
+def test_paid_native_failure_publishes_when_construction_capacity_is_exhausted():
+    """The live issuer reservation must cover failure publication without new D."""
+    run("""
+    L,x,actual,c,r,req,a,t,b=prepared()
+    with m._construction(False) as paid:
+        m._start_operation(t,b,L,reservation=paid)
+        with old._synchronized():
+            assert m._charge({'D':m._limits.construction_slots-m._counts['D']})
+        before=m._counts['D']
+        m._fail_operation_paid(t,L,paid,stopped=False)
+        p=m._ticket(t,L)
+        assert p.operation['state']=='HELD' and p.operation['running']
+        assert p.roots[t._subject]['state']=='UNKNOWN' and p.blocked_root
+        assert L.uncertainty.present and m._counts['D']==before
+    assert m._counts['D']==before-1
+    print('MANAGED_BODY_COMPLETE')
+    """)
+
+
+def test_paid_native_failure_holds_before_fallible_union_and_requires_live_owner():
+    """Union failure cannot leave ACTIVE, and dead/foreign tokens grant no write."""
+    run("""
+    L,x,actual,c,r,req,a,t,b=prepared()
+    with m._construction(False) as dead:
+        pass
+    expect(E.INVALID_OBSERVATION,lambda:m._fail_operation_paid(t,L,dead,stopped=True),True)
+    assert not m._ticket(t,L).operation['running']
+    primary=KeyboardInterrupt('NONSECRET_UNION')
+    def fail_union(self,code):
+        assert m._ticket(t,self).operation['state']=='HELD'
+        assert m._ticket(t,self).roots[t._subject]['state']=='UNKNOWN'
+        raise primary
+    ExecutionLedger.note_incident=fail_union
+    try:
+        with m._construction(False) as paid:
+            m._start_operation(t,b,L,reservation=paid)
+            m._fail_operation_paid(t,L,paid,stopped=True)
+    except BaseException as received:
+        assert received is primary
+    else:raise AssertionError('missing primary')
+    p=m._ticket(t,L)
+    assert p.operation['state']=='HELD' and not p.operation['running']
+    assert p.blocked_root and old._domain.stopped
+    print('MANAGED_BODY_COMPLETE')
+    """)

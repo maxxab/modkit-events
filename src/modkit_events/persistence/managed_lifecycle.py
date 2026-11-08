@@ -9,6 +9,7 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
 from sys import getsizeof
+from threading import get_ident
 from uuid import UUID, SafeUUID
 
 from . import resource_lifecycle as _registry
@@ -179,6 +180,18 @@ def _refund(delta):
         _counts[name] -= amount
 
 
+class _ConstructionReservation:
+    """Private same-thread proof of an already-paid live issuer frame."""
+
+    __slots__ = ("active", "thread")
+
+    def __new__(cls):
+        raise TypeError("construction reservations are issued internally")
+
+    def __init_subclass__(cls, **kwargs):
+        raise TypeError("construction reservations cannot be subclassed")
+
+
 @contextmanager
 def _construction(flag):
     """Charge candidates/_outgoing frames before allocation; drop before refund."""
@@ -189,8 +202,11 @@ def _construction(flag):
         elif not _charge({"D": 1}):
             code = ErrorCode.CAPACITY_EXCEEDED
     _reject(code, flag)
+    reservation = None
     try:
-        yield
+        reservation = object.__new__(_ConstructionReservation)
+        reservation.active, reservation.thread = True, get_ident()
+        yield reservation
     except BaseException as primary:
         # An escaping traceback can retain candidate/_outgoing frames. Keep D
         # charged and contain without replacing the first failure metadata.
@@ -208,6 +224,9 @@ def _construction(flag):
     else:
         with _registry._synchronized():
             _refund({"D": 1})
+    finally:
+        if reservation is not None:
+            reservation.active = False
 
 
 def configure_managed_registry(*, limits, execution_ledger):
@@ -341,33 +360,52 @@ def _envelope(token, ledger, kind):
     )
 
 
+def _require_paid_preparation(reservation, unreturned=False):
+    if not _reservation_live(reservation) or type(unreturned) is not bool:
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+
+
+def _reserve_preparation_paid(execution, capacity, ledger, reservation):
+    """Canonical reservation inside an already-paid construction frame."""
+    _require_paid_preparation(reservation)
+    code = None
+    token = _handle("A")
+    candidate = {
+        "token": token,
+        "capacity": capacity,
+        "data": None,
+        "borrows": 0,
+        "x": None,
+        "builder": reservation,
+    }
+    x = None
+    with _registry._synchronized():
+        x = _execution(execution, ledger)
+        if x is None:
+            code = ErrorCode.INVALID_OBSERVATION
+        elif not _active():
+            code = ErrorCode.PROFILE_REJECTED
+        elif (
+            x["preparations"] >= _limits.preparations_per_execution
+            or x["prepare_bytes"] + capacity > _limits.prepare_bytes_per_execution
+            or not _charge({"A": 1, "AB": capacity})
+        ):
+            code = ErrorCode.CAPACITY_EXCEEDED
+        else:
+            candidate["x"] = x
+            x["preparations"] += 1
+            x["prepare_bytes"] += capacity
+            _preparations[token._stamp] = candidate
+    x = candidate = None
+    return token, code
+
+
 def reserve_preparation(execution, capacity, /, *, execution_ledger):
     flag = _context(execution_ledger)
     _require_handles(flag, execution)
     _size(capacity, flag)
-    code = None
-    with _construction(flag):
-        token = _handle("A")
-        candidate = {"token": token, "capacity": capacity, "data": None, "borrows": 0, "x": None}
-        x = None
-        with _registry._synchronized():
-            x = _execution(execution, execution_ledger)
-            if x is None:
-                code = ErrorCode.INVALID_OBSERVATION
-            elif not _active():
-                code = ErrorCode.PROFILE_REJECTED
-            elif (
-                x["preparations"] >= _limits.preparations_per_execution
-                or x["prepare_bytes"] + capacity > _limits.prepare_bytes_per_execution
-                or not _charge({"A": 1, "AB": capacity})
-            ):
-                code = ErrorCode.CAPACITY_EXCEEDED
-            else:
-                candidate["x"] = x
-                x["preparations"] += 1
-                x["prepare_bytes"] += capacity
-                _preparations[token._stamp] = candidate
-        x = candidate = None
+    with _construction(flag) as paid:
+        token, code = _reserve_preparation_paid(execution, capacity, execution_ledger, paid)
     _reject(code, flag)
     return token
 
@@ -390,60 +428,78 @@ def _preparation_size(payload):
     )
 
 
+def _set_preparation_paid(preparation, payload, ledger, reservation, *, unreturned=False):
+    """Validate and publish under existing D; known rejections return codes."""
+    _require_paid_preparation(reservation, unreturned)
+    code = None
+    try:
+        size = _preparation_size(payload)
+    except _ValidationReject as error:
+        if type(error) is not _ValidationReject:
+            raise
+        code = ErrorCode.LOCAL_INVALID_ARGUMENT
+    record = None
+    if code is None:
+        with _registry._synchronized():
+            record = _envelope(preparation, ledger, "A")
+            if (
+                record is None
+                or record["data"] is not None
+                or (unreturned and record.get("builder") is not reservation)
+            ):
+                code = ErrorCode.INVALID_OBSERVATION
+            elif not _active():
+                code = ErrorCode.PROFILE_REJECTED
+            elif size > record["capacity"]:
+                code = ErrorCode.CAPACITY_EXCEEDED
+            else:
+                record["data"] = payload
+    record = None
+    return code
+
+
 def set_preparation(preparation, payload, /, *, execution_ledger):
     """Retain exact immutable bytes or the actual paid E14/E28 FrozenRequest."""
     flag = _context(execution_ledger)
     _require_handles(flag, preparation)
-    with _construction(flag):
-        code = None
-        try:
-            size = _preparation_size(payload)
-        except _ValidationReject as error:
-            if type(error) is not _ValidationReject:
-                raise
-            code = ErrorCode.LOCAL_INVALID_ARGUMENT
-        record = None
-        if code is None:
-            with _registry._synchronized():
-                record = _envelope(preparation, execution_ledger, "A")
-                if record is None or record["data"] is not None:
-                    code = ErrorCode.INVALID_OBSERVATION
-                elif not _active():
-                    code = ErrorCode.PROFILE_REJECTED
-                elif size > record["capacity"]:
-                    code = ErrorCode.CAPACITY_EXCEEDED
-                else:
-                    record["data"] = payload
-        record = None
+    with _construction(flag) as paid:
+        code = _set_preparation_paid(preparation, payload, execution_ledger, paid)
     _reject(code, flag)
+
+
+def _release_preparation_paid(preparation, ledger, reservation, *, unreturned=False):
+    """Drop references before refund, optionally only this builder's new A."""
+    _require_paid_preparation(reservation, unreturned)
+    code = None
+    record = x = _outgoing = None
+    amount = 0
+    with _registry._synchronized():
+        record = _envelope(preparation, ledger, "A")
+        if record is None or (unreturned and record.get("builder") is not reservation):
+            code = ErrorCode.INVALID_OBSERVATION
+        elif record["borrows"]:
+            code = ErrorCode.RESOURCE_BUSY
+        else:
+            x = record["x"]
+            x["drops"] += 1
+            amount = record["capacity"]
+            _outgoing = _preparations.pop(preparation._stamp)
+    record = _outgoing = None
+    if x is not None:
+        with _registry._synchronized():
+            x["preparations"] -= 1
+            x["prepare_bytes"] -= amount
+            x["drops"] -= 1
+            _refund({"A": 1, "AB": amount})
+    x = None
+    return code
 
 
 def release_preparation(preparation, /, *, execution_ledger):
     flag = _context(execution_ledger)
     _require_handles(flag, preparation)
-    code = None
-    with _construction(flag):
-        record = x = _outgoing = None
-        amount = 0
-        with _registry._synchronized():
-            record = _envelope(preparation, execution_ledger, "A")
-            if record is None:
-                code = ErrorCode.INVALID_OBSERVATION
-            elif record["borrows"]:
-                code = ErrorCode.RESOURCE_BUSY
-            else:
-                x = record["x"]
-                x["drops"] += 1
-                amount = record["capacity"]
-                _outgoing = _preparations.pop(preparation._stamp)
-        record = _outgoing = None
-        if x is not None:
-            with _registry._synchronized():
-                x["preparations"] -= 1
-                x["prepare_bytes"] -= amount
-                x["drops"] -= 1
-                _refund({"A": 1, "AB": amount})
-        x = None
+    with _construction(flag) as paid:
+        code = _release_preparation_paid(preparation, execution_ledger, paid)
     _reject(code, flag)
 
 
@@ -637,10 +693,12 @@ def _ticket(token, ledger):
     return p
 
 
-def _start_operation(ticket, result, ledger):
+def _start_operation(ticket, result, ledger, *, reservation=None):
     """Issuer-only start; return the exact paid request, never caller live args."""
     flag = _context(ledger)
     _require_handles(flag, ticket, result)
+    if reservation is not None and not _reservation_live(reservation):
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=flag)
     code = request = None
     with _construction(flag):
         p = record = root = None
@@ -666,9 +724,58 @@ def _start_operation(ticket, result, ledger):
                     p.operation["result_stamp"] = result._stamp
                     p.operation["state"] = "RUNNING"
                     p.operation["running"] = True
+                    p.operation["issuer"] = reservation
         p = record = root = None
     _reject(code, flag)
     return request
+
+
+def _reservation_live(reservation):
+    return (
+        type(reservation) is _ConstructionReservation
+        and reservation.active
+        and reservation.thread == get_ident()
+    )
+
+
+def _owns_operation_paid(ticket, ledger, reservation):
+    """Identify only this live issuer's atomic start, including a lost return."""
+    if not _reservation_live(reservation):
+        return False
+    with _registry._synchronized():
+        p = _ticket(ticket, ledger)
+        owned = p is not None and p.operation.get("issuer") is reservation
+        p = None
+    return owned
+
+
+def _fail_operation_paid(ticket, ledger, reservation, *, stopped):
+    """This issuer's failure under its live D; hold before fallible ledger work.
+
+    Atomic start binds the exact reservation. A rejected competing attempt has
+    no authority over an older operation. stopped=True remains the issuer's
+    observation, never waiter cancellation or physical-close receipt authority.
+    """
+    if not _reservation_live(reservation) or type(stopped) is not bool:
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+    valid = False
+    with _registry._synchronized():
+        p = _ticket(ticket, ledger)
+        if (
+            p is not None
+            and p.operation.get("issuer") is reservation
+            and p.operation["state"] in ("RUNNING", "HELD", "COMPLETED")
+        ):
+            p.operation["state"] = "HELD"
+            p.roots[ticket._subject]["state"] = "UNKNOWN"
+            p.blocked_root = True
+            if stopped:
+                p.operation["running"] = False
+            valid = True
+        p = None
+    if not valid:
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+    ledger.note_incident(ErrorCode.OUTCOME_UNKNOWN)
 
 
 def _hold_operation(ticket, ledger):
