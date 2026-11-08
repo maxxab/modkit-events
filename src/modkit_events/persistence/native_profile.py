@@ -7,6 +7,7 @@ Startup component provenance is cooperative, not authentication of Python code.
 from dataclasses import Field, dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum, EnumType
+from math import isfinite
 from sys import getsizeof
 from types import FunctionType
 from uuid import UUID
@@ -22,6 +23,8 @@ _MAX = 1048576
 _LIST_ROW_PAYLOAD_MAX = 14 * _MAX
 DEFAULT_LIST_PAGE_PAYLOAD_BYTES = 16 * _MAX
 MAX_LIST_PAGE_PAYLOAD_BYTES = 256 * _LIST_ROW_PAYLOAD_MAX
+DEFAULT_ACQUIRE_PAGE_PAYLOAD_BYTES = 16 * _MAX
+MAX_ACQUIRE_PAGE_PAYLOAD_BYTES = 2**32
 _MATERIAL = (
     ("material_state", C.WireType.TEXT, False),
     ("protected_sidecar", C.WireType.BYTEA, True),
@@ -64,12 +67,12 @@ def _shape(statement):
         or len(statement.parameters) not in (1, 4, 7, 29)
         or type(statement.result) is not C.ResultSpec
         or type(statement.result.columns) is not tuple
-        or len(statement.result.columns) not in (2, 71, 72)
+        or len(statement.result.columns) not in (2, 71, 72, 75)
     ):
         reject()
     C._validate_statement_spec(statement, _reject=reject)
     C._validate_result_spec(statement.result, _reject=reject)
-    if statement.key not in ("W01", "W02", "W03", "W04"):
+    if statement.key not in ("W01", "W02", "W03", "W04", "W05"):
         reject()
     for value in statement.parameters:
         C._validate_parameter_spec(value, _reject=reject)
@@ -84,6 +87,20 @@ def _shape(statement):
             (c.name, c.wire_type, c.nullable) for c in C.get_statement("E03").result.columns
         )
         record, cardinality, mutation = C.RecordKind.ADMISSION, C.CardinalityKind.EXACT_ONE, True
+    elif statement.key == "W05":
+        params = tuple(
+            (p.name, p.wire_type, p.nullable)
+            for p in C.get_statement("E04").parameters
+            if p.name != "kind"
+        )
+        cols = (
+            tuple(
+                (c.name, c.wire_type, c.nullable) for c in C.get_statement("E04").result.columns[:4]
+            )
+            + tuple((c.name, c.wire_type, True) for c in C.get_statement("E15").result.columns)
+            + tuple((name, wire, True) for name, wire, _ in _JOB)
+        )
+        record, cardinality, mutation = C.RecordKind.JOB_SCAN, C.CardinalityKind.SCAN, True
     elif statement.key == "W04":
         params = tuple((p.name, p.wire_type, p.nullable) for p in C.get_statement("E17").parameters)
         cols = (
@@ -113,7 +130,11 @@ def _shape(statement):
     if (
         tuple((p.name, p.wire_type, p.nullable) for p in statement.parameters) != params
         or tuple((c.name, c.wire_type, c.nullable) for c in statement.result.columns) != cols
-        or any(p.constraint.value != p.name for p in statement.parameters)
+        or any(
+            p.constraint.value
+            != ("work_cursor" if statement.key == "W05" and p.name == "scan_after" else p.name)
+            for p in statement.parameters
+        )
         or statement.result.record is not record
         or statement.result.cardinality is not cardinality
         or statement.mutation is not mutation
@@ -170,20 +191,29 @@ def _validate_operation(operation):
     submit = operation.statement.key == "W01"
     listing = operation.statement.key == "W03"
     finding = operation.statement.key == "W04"
+    acquiring = operation.statement.key == "W05"
     _carrier(
         operation.request_type,
         "modkit_workers.persistence.models",
-        "JobSubmitRequest"
+        "JobAcquireRequest"
+        if acquiring
+        else "JobSubmitRequest"
         if submit
         else "JobFindRequest"
         if finding
         else "JobListRequest"
         if listing
         else "JobReadRequest",
-        ("job",) if submit or finding else ("after", "limit") if listing else ("work_id",),
+        ("capabilities", "limit", "lease_seconds", "scan_after", "discovery_budget")
+        if acquiring
+        else ("job",)
+        if submit or finding
+        else ("after", "limit")
+        if listing
+        else ("work_id",),
     )
     if type(operation.result_types) is not tuple or len(operation.result_types) != (
-        1 if submit else 6 if finding else 3
+        1 if submit else 6 if finding else 4 if acquiring else 3
     ):
         reject()
     result_shapes = (
@@ -195,6 +225,8 @@ def _validate_operation(operation):
             ("JobPayload", _PAYLOAD),
         )
     )
+    if acquiring:
+        result_shapes += (("JobClaimObservation", ("record", "fence")),)
     if finding:
         result_shapes += (
             ("JobCandidate", ("work", "job")),
@@ -203,12 +235,24 @@ def _validate_operation(operation):
         _decision_enum(operation.result_types[5])
     for cls, (name, names) in zip(operation.result_types, result_shapes):
         _carrier(cls, "modkit_workers.persistence.observations", name, names)
-    suffix = "submit" if submit else "find" if finding else "list" if listing else "read"
+    suffix = (
+        "acquire"
+        if acquiring
+        else "submit"
+        if submit
+        else "find"
+        if finding
+        else "list"
+        if listing
+        else "read"
+    )
     callbacks = (
         (
             operation.build_request,
             "bindings",
-            "_submit_raw"
+            "_acquire_raw"
+            if acquiring
+            else "_submit_raw"
             if submit
             else "_find_jobs_raw"
             if finding
@@ -302,6 +346,25 @@ def _scalar(value, wire, nullable, name):
         expected = bytes if wire is C.WireType.BYTEA else str
         if type(value) is not expected or len(value) > _cap(name, wire):
             reject()
+    if wire is C.WireType.FLOAT8:
+        if type(value) is not float or not isfinite(value):
+            reject()
+        return value
+    if wire in (C.WireType.BYTEA_ARRAY, C.WireType.INT4_ARRAY):
+        if type(value) is not tuple or not 1 <= len(value) <= 256:
+            reject()
+        for item in value:
+            if wire is C.WireType.BYTEA_ARRAY:
+                if type(item) is not bytes or not 1 <= len(item) <= 256:
+                    reject()
+                try:
+                    text = item.decode("utf-8")
+                except UnicodeDecodeError:
+                    reject()
+                B._identifier_raw(text)
+            else:
+                B._integer_raw(item, 1, 2**31 - 1)
+        return value
     return B._scalar_raw(value, wire, nullable)
 
 
@@ -317,6 +380,21 @@ def _parameters(statement, parameters, context):
     for value, spec in zip(parameters, statement.parameters):
         if _scalar(value, spec.wire_type, spec.nullable, spec.name) is not value:
             reject()
+    if statement.key == "W05":
+        namespace, commands, versions, limit, lease, cursor, discovery = parameters
+        if namespace != b"jobs" or context.expected or context.readiness is not None:
+            reject()
+        if len(commands) != len(versions) or not 0 < lease <= 3600:
+            reject()
+        B._integer_raw(limit, 1, 256)
+        B._integer_raw(discovery, limit, 4096)
+        previous = None
+        for command, version in zip(commands, versions):
+            pair = (command, version)
+            if previous is not None and pair <= previous:
+                reject()
+            previous = pair
+        return
     if statement.key in ("W02", "W03"):
         if context.expected:
             reject()
@@ -395,7 +473,7 @@ def decode_columns(statement: C.StatementSpec, values: tuple, /) -> tuple:
 
 def _storage(value):
     """One exact immutable scalar, never recursively walking an object."""
-    if value is None or type(value) in (bytes, str, bool, int):
+    if value is None or type(value) in (bytes, str, bool, int, float):
         return getsizeof(value)
     if type(value) is UUID:
         B._uuid_raw(value)
@@ -413,7 +491,13 @@ def _validate_max_page_payload_bytes(value, /):
     return B._integer_raw(value, 1, MAX_LIST_PAGE_PAYLOAD_BYTES)
 
 
+def _validate_acquire_max_page_payload_bytes(value, /):
+    return B._integer_raw(value, 1, MAX_ACQUIRE_PAGE_PAYLOAD_BYTES)
+
+
 def _validate_operation_budget(operation, value):
+    if operation.statement.key == "W05":
+        return _validate_acquire_max_page_payload_bytes(value)
     if operation.statement.key == "W03":
         return _validate_max_page_payload_bytes(value)
     if value is not None:
@@ -436,7 +520,10 @@ def _request_size(request, operation, *, max_page_payload_bytes=None):
     size = (
         getsizeof(request)
         + getsizeof(request.parameters)
-        + sum(_storage(v) for v in request.parameters)
+        + sum(
+            getsizeof(v) + sum(_storage(item) for item in v) if type(v) is tuple else _storage(v)
+            for v in request.parameters
+        )
     )
     size += (
         getsizeof(request.context)
@@ -475,7 +562,7 @@ def _request_size(request, operation, *, max_page_payload_bytes=None):
             _storage(getattr(scope, n))
             for n in ("canonical_version", "canonical", "application", "tenant", "owner")
         )
-    if operation.statement.key == "W03":
+    if operation.statement.key in ("W03", "W05"):
         size += getsizeof(max_page_payload_bytes) + _budget_metadata_growth()
     return size
 
@@ -493,6 +580,8 @@ def _result_size(request, value, operation, *, max_page_payload_bytes=None):
         ):
             reject()
         size = getsizeof(value) + _storage(value.work_id) + _storage(value.inserted)
+    elif operation.statement.key == "W05":
+        size = _acquire_result_size(request, value, operation, max_page_payload_bytes)
     elif operation.statement.key == "W03":
         if type(value) is not tuple or len(value) > request.parameters[3]:
             reject()
@@ -667,6 +756,11 @@ def _job_result_size(value, operation):
 # Conservative interpreter-derived storage upper bounds. References appearing
 # repeatedly are charged repeatedly; no deduplication underestimates retention.
 def _upper(wire, cap=0):
+    if wire in (C.WireType.BYTEA_ARRAY, C.WireType.INT4_ARRAY):
+        base = C.WireType.BYTEA if wire is C.WireType.BYTEA_ARRAY else C.WireType.INT4
+        return getsizeof((None,) * 256) + 256 * _upper(base, 256)
+    if wire is C.WireType.FLOAT8:
+        return getsizeof(0.0)
     if wire is C.WireType.BYTEA:
         return getsizeof(b"") + cap
     if wire is C.WireType.TEXT:
@@ -719,8 +813,13 @@ def _preparation_capacity(operation, *, max_page_payload_bytes=None):
             + _upper(C.WireType.BYTEA, 781)
             + 3 * _upper(C.WireType.BYTEA, 256)
         )
-    if operation.statement.key == "W03":
-        size += getsizeof(MAX_LIST_PAGE_PAYLOAD_BYTES) + _budget_metadata_growth()
+    if operation.statement.key in ("W03", "W05"):
+        maximum = (
+            MAX_ACQUIRE_PAGE_PAYLOAD_BYTES
+            if operation.statement.key == "W05"
+            else MAX_LIST_PAGE_PAYLOAD_BYTES
+        )
+        size += getsizeof(maximum) + _budget_metadata_growth()
     return size
 
 
@@ -739,6 +838,8 @@ def result_capacity(
         return _job_result_capacity(operation)
     if operation.statement.key == "W04":
         return _find_result_capacity(operation)
+    if operation.statement.key == "W05":
+        return _acquire_result_capacity(request, operation, max_page_payload_bytes)
     n = _result_row_limit(request, operation)
     # Exact preallocated page lists coexist with their one tuple conversion.
     page_containers = getsizeof((None,) * n) + getsizeof([None] * n)
@@ -772,7 +873,7 @@ def _result_row_limit(request, operation, /):
     validate_request(request, operation.statement)
     return (
         request.parameters[3]
-        if operation.statement.key == "W03"
+        if operation.statement.key in ("W03", "W05")
         else 2
         if operation.statement.key == "W04"
         else 1
@@ -848,3 +949,101 @@ def _find_result_capacity(operation):
     transport += sum(max(getsizeof(None), _binary_upper(col)) for col in columns)
     sentinel = getsizeof((None,) * 3) + 3 * transport
     return typed + canonical + sentinel
+
+
+def _fence_size(value):
+    M._validate_fence_raw(value)
+    return getsizeof(value) + sum(_storage(getattr(value, name)) for name in M.Fence.__slots__)
+
+
+def _acquire_result_size(request, value, operation, budget):
+    O._validate_scan_page_raw(value)
+    if len(value.items) > request.parameters[3] or type(value.next_cursor) not in (
+        UUID,
+        type(None),
+    ):
+        reject()
+    size = (
+        getsizeof(value)
+        + getsizeof(value.items)
+        + _storage(value.visited)
+        + _storage(value.next_cursor)
+        + _storage(value.pass_exhausted)
+    )
+    # Canonical framing tags occur once per emitted row, even when interned.
+    payload_bytes = len(b"header")
+    columns = C.get_statement("E15").result.columns
+    for claim in value.items:
+        if type(claim) is not operation.result_types[3]:
+            reject()
+        size += (
+            getsizeof(claim) + _job_result_size(claim.record, operation) + _fence_size(claim.fence)
+        )
+        work, details, payload = claim.record.work, claim.record.details, claim.record.payload
+        if work.resolution is not None:
+            reject()
+        if (
+            claim.fence.work_id != work.work_id
+            or claim.fence.token != work.token
+            or claim.fence.ownership_revision != work.ownership_revision
+            or claim.fence.cycle != work.cycle
+            or claim.fence.expected_attempt != work.attempt_count
+        ):
+            reject()
+        payload_bytes += len(b"item")
+        for col in columns[:39]:
+            scalar = getattr(work, col.name)
+            if scalar is not None and col.wire_type in (C.WireType.BYTEA, C.WireType.TEXT):
+                payload_bytes += (
+                    len(scalar) if type(scalar) is bytes else len(scalar.encode("utf-8"))
+                )
+        for name in ("application", "tenant", "owner", "protected_binding"):
+            scalar = getattr(details, name)
+            if scalar is not None:
+                payload_bytes += (
+                    len(scalar) if type(scalar) is bytes else len(scalar.encode("utf-8"))
+                )
+        for name in _PAYLOAD:
+            scalar = getattr(payload, name)
+            if type(scalar) in (M.MaterialState, M.CleanupPolicy):
+                payload_bytes += len(scalar.value.encode("utf-8"))
+            elif type(scalar) is bytes:
+                payload_bytes += len(scalar)
+            elif type(scalar) is str:
+                payload_bytes += len(scalar.encode("utf-8"))
+        if payload_bytes > budget:
+            reject()
+    if payload_bytes > budget:
+        reject()
+    return size
+
+
+def _acquire_result_capacity(request, operation, budget):
+    n = _result_row_limit(request, operation)
+    variable = min(budget, n * _LIST_ROW_PAYLOAD_MAX)
+    fence = _carrier_upper(M.Fence) + 2 * _upper(C.WireType.UUID) + 3 * _upper(C.WireType.INT8)
+    typed = (
+        _carrier_upper(O.ScanPage)
+        + getsizeof([None] * n)
+        + getsizeof((None,) * n)
+        + _upper(C.WireType.INT4)
+        + _upper(C.WireType.UUID)
+        + _upper(C.WireType.BOOL)
+        + n
+        * (
+            _carrier_upper(operation.result_types[3])
+            + fence
+            + _job_result_capacity(operation)
+            - _LIST_ROW_PAYLOAD_MAX
+        )
+    )
+    columns = operation.statement.result.columns
+    canonical_row = (
+        getsizeof((None,) * len(columns)) + _column_upper(columns) - _LIST_ROW_PAYLOAD_MAX
+    )
+    canonical = getsizeof([None] * (n + 1)) + getsizeof((None,) * (n + 1)) + (n + 1) * canonical_row
+    wire_row = getsizeof((None,) * (len(columns) + 1)) + getsizeof(b"") + 1
+    wire_row += sum(max(getsizeof(None), _binary_upper(col)) for col in columns)
+    wire_row -= _LIST_ROW_PAYLOAD_MAX
+    wire = getsizeof((None,) * (n + 2)) + (n + 2) * wire_row
+    return typed + canonical + wire + 3 * variable

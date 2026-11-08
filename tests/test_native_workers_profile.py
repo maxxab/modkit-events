@@ -1227,3 +1227,176 @@ else:raise AssertionError('late invalid retained graph accepted')
 print('MANAGED_BODY_COMPLETE')
 """
     )
+
+
+def test_acquire_raw_fence_page_preserve_identity_and_public_parity():
+    _run("""
+from uuid import UUID
+from modkit_events.persistence import models as M, observations as O
+from modkit_events.persistence.errors import _ValidationReject
+assert hasattr(M, '_fence_raw'), 'raw Fence missing'
+assert hasattr(O, '_scan_page_raw'), 'raw ScanPage missing'
+values=dict(work_id=UUID(int=1),token=UUID(int=2),ownership_revision=1,cycle=1,expected_attempt=1)
+expected=M.Fence(**values)
+page_expected=O.ScanPage(items=(expected,),visited=1,next_cursor=values['work_id'],pass_exhausted=False)
+def forbidden(*a,**k): raise AssertionError('public constructor reached')
+M.Fence.__post_init__=forbidden
+O.ScanPage.__post_init__=forbidden
+actual=M._fence_raw(**values)
+items=(actual,)
+page=O._scan_page_raw(items=items,visited=1,next_cursor=values['work_id'],pass_exhausted=False)
+assert actual==expected and page==page_expected
+assert actual.work_id is values['work_id'] and page.items is items
+M._validate_fence_raw(actual)
+O._validate_scan_page_raw(page)
+for bad in (True,0,2**63):
+    try: M._fence_raw(**dict(values,ownership_revision=bad))
+    except _ValidationReject: pass
+    else: raise AssertionError('bad fence')
+try: O._scan_page_raw(items=items,visited=0,next_cursor=None,pass_exhausted=True)
+except _ValidationReject: pass
+else: raise AssertionError('bad page')
+print('MANAGED_BODY_COMPLETE')
+""")
+
+
+_ACQUIRE_SETUP = (
+    _WORKERS
+    + """
+from uuid import UUID
+from modkit_events.persistence import native_profile as P, bindings as B, models as M, observations as O
+# Fixed cooperative callbacks isolate common profile accounting from consumer
+# implementation. They are not evidence for the real Workers decoder.
+exec('def _acquire_raw(request): pass', WB.__dict__)
+exec('def _decode_acquire_raw(request, rows): pass', WR.__dict__)
+exec('def _validate_acquire_result_raw(request, value): pass', WR.__dict__)
+def acquire_operation():
+    return P.WorkersNativeOperation(statement=WC.get_statement('W05'),request_type=WM.JobAcquireRequest,build_request=WB._acquire_raw,decode_rows=WR._decode_acquire_raw,validate_result=WR._validate_acquire_result_raw,result_types=(WO.JobRecord,WO.JobDetails,WO.JobPayload,WO.JobClaimObservation))
+def acquire_request(op,n=256,k=256):
+    commands=tuple(('task%03d'%i).encode() for i in range(k))
+    versions=tuple(1 for i in range(k))
+    parameters=(b'jobs',commands,versions,n,0.125,UUID(int=1),4096)
+    return P.freeze_request(op.statement,parameters,context=B._return_context_raw(expected=()))
+"""
+)
+
+
+@workers_companion
+def test_acquire_retains_seven_parameters_budget_and_bounded_capacity():
+    _run(
+        _ACQUIRE_SETUP
+        + """
+from sys import getsizeof
+from modkit_events.persistence.errors import _ValidationReject
+assert hasattr(P, '_validate_acquire_max_page_payload_bytes'), 'acquisition budget missing'
+op=acquire_operation()
+Q=16*1048576
+for n in (1,16,256):
+    request=acquire_request(op,n)
+    P.validate_request(request,op.statement)
+    assert len(request.parameters)==7 and not request.context.expected and request.context.readiness is None
+    assert P._result_row_limit(request,op)==n
+    assert P._request_size(request,op,max_page_payload_bytes=Q)<=P._preparation_capacity(op,max_page_payload_bytes=Q)
+    fixed=P.result_capacity(op,request=request,max_page_payload_bytes=1)-3
+    capacity=P.result_capacity(op,request=request,max_page_payload_bytes=Q)
+    assert capacity==fixed+3*min(Q,n*14*1048576)
+    assert capacity<80*1048576
+    assert P.result_capacity(op,request=request,max_page_payload_bytes=Q+1)-capacity==(0 if n==1 else 3)
+for bad in (None,True,0,-1,2**32+1,1.0):
+    try: P._validate_acquire_max_page_payload_bytes(bad)
+    except _ValidationReject: pass
+    else: raise AssertionError('invalid Q accepted')
+assert P._validate_acquire_max_page_payload_bytes(2**32)==2**32
+request=acquire_request(op)
+for index,bad in ((0,b'other'),(1,[b'task']),(1,()),(2,(True,)),(3,True),(4,1),(4,float('inf')),(4,0.0),(6,255)):
+    values=list(request.parameters);values[index]=bad
+    try: P.freeze_request(op.statement,tuple(values),context=request.context)
+    except _ValidationReject: pass
+    else: raise AssertionError(('invalid retained request',index))
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+_ACQUIRE_GRAPH = (
+    _JOB_SETUP
+    + _ACQUIRE_SETUP
+    + """
+from datetime import timedelta
+from modkit_events.persistence.rows import _decode_work_observation_raw
+from modkit_events.persistence.errors import _ValidationReject
+def acquisition_graph(n):
+    submit=WB._submit_raw(WM.JobSubmitRequest(job=job({'x':'payload'})))
+    template=read_row(submit)
+    names=[col.name for col in C.get_statement('E15').result.columns]
+    items=[]
+    canonical=[]
+    for i in range(n):
+        row=list(template)
+        for name,val in (('work_id',UUID(int=i+1)),('state','claimed'),('token',UUID(int=1000+i)),('ownership_revision',1),('lease_until',now+timedelta(seconds=1))):
+            row[names.index(name)]=val
+        row[56]=row[0]
+        work=_decode_work_observation_raw(tuple(row[:56]))
+        record=WR._decode_job_half_raw(work,tuple(row[56:]))
+        fence=M._fence_raw(work_id=work.work_id,token=work.token,ownership_revision=work.ownership_revision,cycle=work.cycle,expected_attempt=work.attempt_count)
+        claim=WO.JobClaimObservation(record=record,fence=fence)
+        items.append(claim)
+        canonical.append(('item',None,None,None)+tuple(row))
+    page=O._scan_page_raw(items=tuple(items),visited=n,next_cursor=UUID(int=n) if n else None,pass_exhausted=True)
+    header=('header',n,page.next_cursor,True)+(None,)*71
+    return page,(header,)+tuple(canonical)
+"""
+)
+
+
+@workers_companion
+@pytest.mark.parametrize("n", [0, 1, 16, 256])
+def test_acquire_full_graph_all_variable_occurrences_exact_q(n):
+    _run(
+        _ACQUIRE_GRAPH
+        + f"n={n!r}\n"
+        + """
+from dataclasses import fields, is_dataclass
+from sys import getsizeof
+op=acquire_operation();request=acquire_request(op,max(1,n))
+page,rows=acquisition_graph(n)
+q=sum(len(v) if type(v) is bytes else len(v.encode('utf-8')) if type(v) is str else 0 for row in rows for v in row)
+def graph(value):
+    if type(value) is tuple:return getsizeof(value)+sum(graph(v) for v in value)
+    if is_dataclass(value):return getsizeof(value)+sum(graph(getattr(value,f.name)) for f in fields(value))
+    return getsizeof(value)+(getsizeof(value.int) if type(value) is UUID else 0)
+measured=graph(page)
+assert P._result_size(request,page,op,max_page_payload_bytes=q)==measured
+assert measured<=P.result_capacity(op,request=request,max_page_payload_bytes=q)
+try:P._result_size(request,page,op,max_page_payload_bytes=q-1)
+except _ValidationReject:pass
+else:raise AssertionError('all-occurrence Q-1 accepted')
+if n:
+    claim=page.items[-1]
+    bad=M._fence_raw(work_id=claim.fence.work_id,token=claim.fence.token,ownership_revision=claim.fence.ownership_revision,cycle=1,expected_attempt=claim.fence.expected_attempt+1)
+    object.__setattr__(claim,'fence',bad)
+    try:P._result_size(request,page,op,max_page_payload_bytes=q)
+    except _ValidationReject:pass
+    else:raise AssertionError('mismatched final fence accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_acquire_profile_preserves_original_baseexception_identity():
+    _run(
+        _ACQUIRE_SETUP
+        + """
+import asyncio
+page=O._scan_page_raw(items=(),visited=0,next_cursor=None,pass_exhausted=True)
+for primary in (RuntimeError('primary'),asyncio.CancelledError('cancel')):
+    WR._primary=primary
+    exec('def _validate_acquire_result_raw(request,value): raise _primary',WR.__dict__)
+    op=acquire_operation();request=acquire_request(op,1)
+    try:P._result_size(request,page,op,max_page_payload_bytes=6)
+    except BaseException as error:assert error is primary
+    else:raise AssertionError('primary lost')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )

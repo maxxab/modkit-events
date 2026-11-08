@@ -1,4 +1,4 @@
-"""Optional fixed E14/E28 and W01/W02/W03/W04 issuer on the original caller-owned managed root.
+"""Optional fixed E14/E28 and W01/W02/W03/W04/W05 issuer on the original caller-owned managed root.
 
 Cooperative fresh/unpooled psycopg 3.3.8, libpq 180006 profile. No nested/raw
 transaction bypass, global/custom adapter changes, concurrent direct connection
@@ -110,15 +110,18 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     ):
         _invalid()
     limit = 1
+    acquisition = operation is not None and request.statement.key == "W05"
     if operation is not None:
         from .native_profile import _result_row_limit
 
         try:
             limit = _result_row_limit(request, operation)
-            if request.statement.key == "W03":
-                from .native_profile import _validate_max_page_payload_bytes
+            if request.statement.key in ("W03", "W05"):
+                from .native_profile import _validate_operation_budget
 
-                _validate_max_page_payload_bytes(max_page_payload_bytes)
+                _validate_operation_budget(operation, max_page_payload_bytes)
+            if acquisition:
+                limit += 1  # The mandatory header is additional to retained item capacity.
         except _ValidationReject as error:
             if type(error) is not _ValidationReject:
                 raise
@@ -128,6 +131,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         type(count) is not int
         or not 0 <= count <= limit
         or (descriptor.cardinality is CardinalityKind.EXACT_ONE and count != 1)
+        or (acquisition and count == 0)
     ):
         _invalid()
     tag = "SELECT " + str(count)
@@ -148,6 +152,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
             _invalid()
     value = None
     page_payload_bytes = 0
+    previous_work_id = None
     accumulator = [None] * count if operation is not None else None
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
@@ -168,13 +173,40 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
             )
             if max_page_payload_bytes is not None:
                 # Binary decoding already preflighted exact bytes/None and caps.
-                for index in _W03_LARGE_COLUMNS:
-                    cell = decoded[index]
-                    if cell is not None:
-                        page_payload_bytes += len(cell)
+                if acquisition:
+                    # Physical BYTEA includes UTF-8 TEXT. Charge each occurrence,
+                    # including tags, without allocating another encoded string.
+                    for index, column in enumerate(descriptor.transport_columns[1:], start=1):
+                        cell = copied[index]
+                        if column.oid == 17 and cell is not None:
+                            page_payload_bytes += len(cell)
+                else:
+                    for index in _W03_LARGE_COLUMNS:
+                        cell = decoded[index]
+                        if cell is not None:
+                            page_payload_bytes += len(cell)
                 cell = None
                 if page_payload_bytes > max_page_payload_bytes:
                     _invalid()
+            if acquisition:
+                if row_index == 0:
+                    if (
+                        decoded[0] != "header"
+                        or decoded[1] is None
+                        or decoded[3] is None
+                        or any(value is not None for value in decoded[4:])
+                    ):
+                        _invalid()
+                else:
+                    work_id = decoded[4]
+                    if (
+                        decoded[0] != "item"
+                        or any(value is not None for value in decoded[1:4])
+                        or type(work_id) is not UUID
+                        or (previous_work_id is not None and work_id.int <= previous_work_id.int)
+                    ):
+                        _invalid()
+                    previous_work_id = work_id
             if operation is not None:
                 accumulator[row_index] = decoded
             else:
@@ -234,7 +266,7 @@ def execute(ticket, result, /, *, execution_ledger):
             request = _managed._start_operation(ticket, result, execution_ledger, reservation=paid)
             started = True
             operation = _managed._operation_profile(ticket, execution_ledger, reservation=paid)
-            if operation is not None and request.statement.key == "W03":
+            if operation is not None and request.statement.key in ("W03", "W05"):
                 max_page_payload_bytes = _managed._operation_max_page_payload_bytes(
                     ticket, execution_ledger, reservation=paid
                 )
@@ -261,7 +293,27 @@ def execute(ticket, result, /, *, execution_ledger):
             cursor.adapters.register_dumper(UUID, UUIDBinaryDumper)
             cursor.adapters.register_dumper(str, StrBinaryDumper)
             parameters = request.parameters
-            if max_page_payload_bytes is not None:
+            if operation is not None and request.statement.key == "W05":
+                from psycopg.types.array import ListBinaryDumper
+                from psycopg.types.numeric import FloatBinaryDumper, Int8, Int8BinaryDumper
+
+                # Keep capability elements INT4; only the budget uses typed INT8.
+                # These supported list conversions preserve every retained referent.
+                cursor.adapters.register_dumper(int, Int4BinaryDumper)
+                cursor.adapters.register_dumper(float, FloatBinaryDumper)
+                cursor.adapters.register_dumper(list, ListBinaryDumper)
+                cursor.adapters.register_dumper(Int8, Int8BinaryDumper)
+                parameters = (
+                    parameters[0],
+                    list(parameters[1]),
+                    list(parameters[2]),
+                    parameters[3],
+                    parameters[4],
+                    parameters[5],
+                    parameters[6],
+                    Int8(max_page_payload_bytes),
+                )
+            elif max_page_payload_bytes is not None:
                 from psycopg.types.numeric import Int8BinaryDumper
 
                 # W03's fixed SQL casts the retained limit to INT4 and Q to INT8.

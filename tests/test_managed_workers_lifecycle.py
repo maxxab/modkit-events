@@ -3,6 +3,8 @@
 import pytest
 from test_managed_lifecycle import _FIXTURE, _run
 from test_native_workers_profile import (
+    _ACQUIRE_GRAPH,
+    _ACQUIRE_SETUP,
     _FIND_SETUP,
     _JOB_SETUP,
     _LIST_SETUP,
@@ -832,6 +834,81 @@ assert m._ticket(t,L).roots[t._subject]['state']=='UNKNOWN'
 assert m.capacity_snapshot(execution_ledger=L)['AB']==3156870
 assert m.capacity_snapshot(execution_ledger=L)['BB']==required
 expect(E.RESOURCE_BUSY,lambda:m.release_result(b,execution_ledger=L),True)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@pytest.mark.parametrize("over_budget", [False, True])
+def test_acquire_retained_budget_capacity_and_no_partial_publication(over_budget):
+    _run(
+        _FIXTURE
+        + _ACQUIRE_GRAPH
+        + f"over_budget={over_budget!r}\n"
+        + """
+normal_limits=limits
+def limits(**overrides):
+    return normal_limits(prepare_bytes=1000000,prepare_bytes_per_execution=1000000,result_bytes=100000000,result_bytes_per_ticket=100000000)
+page,rows=acquisition_graph(2)
+q=sum(len(v) if type(v) is bytes else len(v.encode('utf-8')) if type(v) is str else 0 for row in rows for v in row)-int(over_budget)
+op=acquire_operation();request=acquire_request(op,2)
+L,x,actual,c=setup_physical()
+with m._construction(False) as paid:
+    a,code=m._reserve_preparation_paid(x,P._preparation_capacity(op,max_page_payload_bytes=q),L,paid)
+    assert code is None
+    assert m._set_preparation_paid(a,request,L,paid,operation=op,max_page_payload_bytes=q) is None
+assert m._preparations[a._stamp]['max_page_payload_bytes'] is q
+r=active_root(c,L);t=m.admit(r,a,execution_ledger=L)
+required=m.result_capacity(t,execution_ledger=L)
+assert required==P.result_capacity(op,request=request,max_page_payload_bytes=q)
+expect(E.CAPACITY_EXCEEDED,lambda:m.reserve_result(t,required-1,execution_ledger=L))
+b=m.reserve_result(t,required,execution_ledger=L)
+with m._construction(False) as issuer:
+    assert m._start_operation(t,b,L,reservation=issuer) is request
+    assert m._operation_max_page_payload_bytes(t,L,reservation=issuer) is q
+    if over_budget:
+        expect(E.INVALID_OBSERVATION,lambda:m.set_result(b,page,execution_ledger=L))
+        assert m._results[b._stamp]['data'] is None and not m._results[b._stamp]['populated']
+        m._fail_operation_paid(t,L,issuer,stopped=True)
+    else:
+        m.set_result(b,page,execution_ledger=L);m._complete_operation(t,L,known=True)
+assert m.capacity_snapshot(execution_ledger=L)['BB']==required
+if over_budget:
+    assert m._ticket(t,L).operation['state']=='HELD'
+    assert m._root(r,L)[1]['state']=='UNKNOWN' and L.uncertainty.present
+else:assert m.read_result(b,execution_ledger=L) is page
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+def test_acquire_retained_maximum_page_fits_configured_single_controller():
+    _run(
+        _FIXTURE
+        + _ACQUIRE_SETUP
+        + """
+op=acquire_operation();request=acquire_request(op);q=16*1048576
+required=P.result_capacity(op,request=request,max_page_payload_bytes=q)
+preparation=P._preparation_capacity(op,max_page_payload_bytes=q)
+normal_limits=limits
+def limits(**overrides):
+    return normal_limits(retained_cells=1,admitted_live=1,checkouts=1,roots=1,roots_per_checkout=1,executions=1,preparations=1,preparations_per_execution=1,results=1,results_per_ticket=1,prepare_bytes=preparation,prepare_bytes_per_execution=preparation,result_bytes=required,result_bytes_per_ticket=required,construction_slots=2,cleanup_bundles=1,cleanup_bytes=1024)
+L,x,actual,c=setup_physical()
+with m._construction(False) as paid:
+    a,code=m._reserve_preparation_paid(x,preparation,L,paid)
+    assert code is None
+    assert m._set_preparation_paid(a,request,L,paid,operation=op,max_page_payload_bytes=q) is None
+r=active_root(c,L);t=m.admit(r,a,execution_ledger=L);b=m.reserve_result(t,required,execution_ledger=L)
+snapshot=m.capacity_snapshot(execution_ledger=L)
+assert all(snapshot[key]==1 for key in ('P','V','C','R','X','A','B'))
+assert snapshot['AB']==preparation and snapshot['BB']==required
+with m._construction(False) as issuer:
+    assert m.capacity_snapshot(execution_ledger=L)['D']==1
+    with m._construction(False):assert m.capacity_snapshot(execution_ledger=L)['D']==2
+    assert m._start_operation(t,b,L,reservation=issuer) is request
+    page=O._scan_page_raw(items=(),visited=0,next_cursor=None,pass_exhausted=True)
+    m.set_result(b,page,execution_ledger=L);m._complete_operation(t,L,known=True)
+assert m.read_result(b,execution_ledger=L) is page
 print('MANAGED_BODY_COMPLETE')
 """
     )

@@ -783,3 +783,35 @@ def _work_observation_raw(**values):
     for name in WorkObservation.__dataclass_fields__:
         object.__setattr__(value, name, values[name])
     return value
+
+
+def _validate_scan_page_raw(value, /):
+    """Validate shared framing; concrete item semantics belong to the decoder."""
+    from .bindings import _integer_raw, _uuid_raw
+    from .errors import _reject_validation
+
+    if type(value) is not ScanPage:
+        _reject_validation()
+    _integer_raw(value.visited, 0, 4096)
+    if (
+        type(value.items) is not tuple
+        or len(value.items) > 256
+        or len(value.items) > value.visited
+        or type(value.pass_exhausted) is not bool
+    ):
+        _reject_validation()
+    if value.next_cursor is not None:
+        if type(value.next_cursor) is UUID:
+            _uuid_raw(value.next_cursor)
+        elif type(value.next_cursor) is not bytes or len(value.next_cursor) != 32:
+            _reject_validation()
+
+
+def _scan_page_raw(*, items, visited, next_cursor, pass_exhausted):
+    value = object.__new__(ScanPage)
+    object.__setattr__(value, "items", items)
+    object.__setattr__(value, "visited", visited)
+    object.__setattr__(value, "next_cursor", next_cursor)
+    object.__setattr__(value, "pass_exhausted", pass_exhausted)
+    _validate_scan_page_raw(value)
+    return value

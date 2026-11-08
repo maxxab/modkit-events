@@ -491,3 +491,27 @@ def _admission_input_raw(
 
     _canonical_intent_raw(value)
     return value
+
+
+def _validate_fence_raw(value, /):
+    """Validate the exact shared carrier without a sanitizing boundary."""
+    from .bindings import _integer_raw, _uuid_raw
+
+    if type(value) is not Fence:
+        _reject_validation()
+    _uuid_raw(value.work_id)
+    _uuid_raw(value.token)
+    _integer_raw(value.ownership_revision, 1, 2**63 - 1)
+    _integer_raw(value.cycle, 1, 1)
+    _integer_raw(value.expected_attempt, 0, 1000)
+
+
+def _fence_raw(*, work_id, token, ownership_revision, cycle, expected_attempt):
+    value = object.__new__(Fence)
+    object.__setattr__(value, "work_id", work_id)
+    object.__setattr__(value, "token", token)
+    object.__setattr__(value, "ownership_revision", ownership_revision)
+    object.__setattr__(value, "cycle", cycle)
+    object.__setattr__(value, "expected_attempt", expected_attempt)
+    _validate_fence_raw(value)
+    return value

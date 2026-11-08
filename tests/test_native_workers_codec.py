@@ -404,3 +404,108 @@ changed=list(row);changed[-1]=b'x'*1048577
 reject(lambda:N._decode_binary_transport_row(spec,tuple(changed),op,request=request))
 print('MANAGED_BODY_COMPLETE')
 """)
+
+
+def test_w05_transport_exists():
+    _run(
+        "from modkit_events.persistence import native_codec as N; assert hasattr(N, '_W05_SQL'), 'W05 transport missing'; print('MANAGED_BODY_COMPLETE')"
+    )
+
+
+# These isolate the transport from the separately owned consumer/profile validation.
+_W05_TRANSPORT = r"""
+from types import SimpleNamespace
+from modkit_events.persistence import native_codec as N, native_profile as P, catalog as C
+from modkit_events.persistence.errors import _ValidationReject
+from uuid import UUID
+header=(
+    C.ColumnSpec(name='record_type',wire_type=C.WireType.TEXT,nullable=False),
+    C.ColumnSpec(name='visited',wire_type=C.WireType.INT4,nullable=True),
+    C.ColumnSpec(name='next_cursor',wire_type=C.WireType.UUID,nullable=True),
+    C.ColumnSpec(name='pass_exhausted',wire_type=C.WireType.BOOL,nullable=True),
+)
+text_names={'kind','replay_policy','state','success_origin','resolution_record_operation_kind','resolution_record_outcome','resolution_record_reason','material_state','protected_cleanup_policy'}
+cols=header+tuple(C.ColumnSpec(name=c.name,wire_type=C.WireType.TEXT if c.name in text_names else c.wire_type,nullable=True) for c in N._W02_COLUMNS[1:])
+spec=SimpleNamespace(key='W05',result=SimpleNamespace(columns=cols))
+seen=[]
+op=SimpleNamespace(statement=spec,decode_rows=lambda request,rows: seen.append(rows) or rows)
+request=SimpleNamespace(statement=spec,parameters=(b'jobs',(b'a',b'b'),(1,2147483647),256,0.0000005,None,4096))
+P._validate_operation=lambda operation: None
+P._result_row_limit=lambda request,operation: request.parameters[3]
+P.decode_columns=lambda statement,values: values
+def descriptor(q=16777216):
+    return N._selected_sql_descriptor(spec,op,request=request,max_page_payload_bytes=q)
+def header_row():
+    return (b'\x01',b'header',(0).to_bytes(4,'big'),None,b'\x01')+(None,)*71
+def rejected(fn):
+    try: fn()
+    except _ValidationReject as error: assert type(error) is _ValidationReject
+    else: raise AssertionError('invalid transport accepted')
+"""
+
+
+def test_w05_exact_nullable_frame_metadata_and_eight_casts():
+    _run(
+        _W05_TRANSPORT
+        + """
+d=descriptor()
+assert len(d.canonical_columns)==75 and len(d.transport_columns)==76
+assert d.sentinel_limit==258 and d.cardinality is C.CardinalityKind.SCAN
+assert d.parameter_casts==('pg_catalog.bytea','pg_catalog.bytea[]','pg_catalog.int4[]','pg_catalog.int4','pg_catalog.float8','pg_catalog.uuid','pg_catalog.int4','pg_catalog.int8')
+assert tuple(c.name for c in d.transport_columns[1:])==tuple(c.name for c in cols)
+assert all(c.nullable for c in d.transport_columns[2:])
+assert [c.oid for c in d.transport_columns[:6]]==[16,17,23,2950,16,2950]
+assert N._decode_binary_transport_row(spec,header_row(),op,request=request,max_page_payload_bytes=6)==('header',0,None,True)+(None,)*71
+for q in (None,True,0,2**32+1):
+    rejected(lambda: descriptor(q))
+assert descriptor(2**32).sentinel_limit==258
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+def test_w05_sql_preserves_source_ordinal_and_charges_every_variable_occurrence():
+    _run(
+        _W05_TRANSPORT
+        + """
+sql=descriptor().sql.decode()
+assert 'WITH ORDINALITY' in sql and 'source_ordinal' in sql
+assert 'LIMIT ($4::pg_catalog.int4 + 2)' in sql
+assert sql.count('LIMIT ')==1, 'final LIMIT must not hide source overflow'
+assert 'ORDER BY c.record_type' in sql
+assert 'lag(s.work_id)' in sql
+assert 's.source_ordinal OPERATOR(pg_catalog.=) 1' in sql
+assert 'pg_catalog.bool_and' in sql and 'OVER ()' in sql
+for col in cols:
+    if col.wire_type in (C.WireType.BYTEA,C.WireType.TEXT):
+        expression='s.'+col.name if col.wire_type is C.WireType.BYTEA else "pg_catalog.convert_to(s."+col.name+", 'UTF8')"
+        assert 'COALESCE(pg_catalog.octet_length('+expression+')::pg_catalog.int8, 0::pg_catalog.int8)' in sql,col.name
+assert '$8::pg_catalog.int8::pg_catalog.numeric' in sql
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+def test_w05_exact_all_75_positions_match_independent_contract():
+    # _EXPECTED_W02 is the independently enumerated Work56 + Job15 ABI above.
+    expected = (
+        ("record_type", "text", False, 6),
+        ("visited", "int4", True, 4),
+        ("next_cursor", "uuid", True, 16),
+        ("pass_exhausted", "bool", True, 1),
+    ) + tuple((name, wire, True, cap) for name, wire, nullable, cap in _EXPECTED_W02)
+    _run(
+        _W05_TRANSPORT
+        + "expected="
+        + repr(expected)
+        + "\n"
+        + """
+d=descriptor()
+oids={'bytea':17,'text':17,'int4':23,'int8':20,'xid8':5069,'uuid':2950,'timestamptz':1184,'bool':16}
+assert len(expected)==75
+for canonical,transport,(name,wire,nullable,cap) in zip(d.canonical_columns,d.transport_columns[1:],expected):
+    assert (canonical.name,canonical.wire_type.value,canonical.nullable)==(name,wire,nullable)
+    assert (transport.name,transport.oid,transport.nullable,transport.max_payload_bytes)==(name,oids[wire],nullable,cap)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )

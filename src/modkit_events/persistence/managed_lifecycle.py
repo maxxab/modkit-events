@@ -474,7 +474,7 @@ def _set_preparation_paid(
             else:
                 record["data"] = payload
                 record["profile"] = operation
-                if operation is not None and operation.statement.key == "W03":
+                if operation is not None and operation.statement.key in ("W03", "W05"):
                     record["max_page_payload_bytes"] = max_page_payload_bytes
     record = None
     return code
@@ -725,7 +725,7 @@ def _listing_capacity_error(preparation, capacity):
         return None
     try:
         _validate_operation(profile)
-        if profile.statement.key in ("W03", "W04"):
+        if profile.statement.key in ("W03", "W04", "W05"):
             minimum = profile_capacity(
                 profile,
                 request=preparation["data"],

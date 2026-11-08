@@ -6,7 +6,7 @@ import pytest
 from test_managed_lifecycle import _run
 from test_managed_statement_lifecycle import _SETUP
 from test_native_execution import _DRIVER
-from test_native_workers_codec import _PROFILE
+from test_native_workers_codec import _PROFILE, _W05_TRANSPORT
 from test_native_workers_profile import _WORKERS, workers_companion
 
 _WORKER_SETUP = r"""
@@ -793,3 +793,199 @@ assert m._results[b._stamp]['capacity']==capacity and m._counts['D']>=1
 assert_held(t,L,b)
 print('MANAGED_BODY_COMPLETE')
 """)
+
+
+_W05_DRIVER = r"""
+# Fake driver only; exercise the real issuer with its already-established lifecycle.
+class FloatBinaryDumper: pass
+class Int8BinaryDumper: pass
+class Int8(int): pass
+class ListBinaryDumper: pass
+numeric_types.FloatBinaryDumper=FloatBinaryDumper
+numeric_types.Int8BinaryDumper=Int8BinaryDumper
+numeric_types.Int8=Int8
+array_types=ModuleType('psycopg.types.array')
+array_types.ListBinaryDumper=ListBinaryDumper
+sys.modules['psycopg.types.array']=array_types
+def acquisition_cursor(values,q=16777216):
+    result=Result('E14',values)
+    result.descriptor=descriptor(q)
+    result.nfields=len(result.descriptor.transport_columns)
+    return SimpleNamespace(pgresult=result,rowcount=len(values),statusmessage='SELECT '+str(len(values)),nextset=lambda: None)
+def materialize(values,q=16777216):
+    cursor=acquisition_cursor(values,q)
+    return native._materialize(cursor,request,cursor.pgresult.descriptor,op,max_page_payload_bytes=q)
+def item_row(work_id=1):
+    values=[None]*75
+    values[0]=b'item'
+    values[4]=UUID(int=work_id).bytes
+    return (b'\x01',)+tuple(values)
+"""
+
+
+def run_w05(body):
+    _run(_SETUP + _DRIVER + _W05_TRANSPORT + _W05_DRIVER + textwrap.dedent(body))
+
+
+def test_w05_materializes_header_plus_256_items_before_callback():
+    run_w05("""
+    values=[header_row()]+[item_row(i) for i in range(1,257)]
+    page=materialize(values)
+    assert len(page)==257 and len(seen)==1 and seen[0] is page
+    assert page[0][0]=='header' and page[-1][4]==UUID(int=256)
+    print('MANAGED_BODY_COMPLETE')
+    """)
+
+
+def test_w05_header_budget_charges_all_variable_fields_and_repeated_values():
+    run_w05("""
+    assert len(materialize([header_row()],6))==1
+    seen.clear()
+    expect(E.INVALID_OBSERVATION,lambda:materialize([header_row()],5),True)
+    assert not seen
+    row=list(item_row());row[6]=b'abc';row[8]=row[6]
+    # header(6)+item(4)+two separate equal byte occurrences(6).
+    assert len(materialize([header_row(),tuple(row)],16))==2
+    seen.clear()
+    expect(E.INVALID_OBSERVATION,lambda:materialize([header_row(),tuple(row)],15),True)
+    assert not seen
+    print('MANAGED_BODY_COMPLETE')
+    """)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "empty",
+        "missing",
+        "duplicate",
+        "header_payload",
+        "item_header",
+        "descending",
+        "duplicate_id",
+        "sentinel",
+        "late_bool",
+        "extra",
+    ],
+)
+def test_w05_rejects_entire_malformed_page_before_callback(case):
+    run_w05(
+        "CASE="
+        + repr(case)
+        + "\n"
+        + textwrap.dedent("""
+    values=[header_row(),item_row()]
+    if CASE=='empty':values=[]
+    elif CASE=='missing':values=[item_row()]
+    elif CASE=='duplicate':values=[header_row(),header_row()]
+    elif CASE=='header_payload':
+        row=list(header_row());row[5]=UUID(int=1).bytes;values=[tuple(row)]
+    elif CASE=='item_header':
+        row=list(item_row());row[2]=b'\\x00'*4;values[1]=tuple(row)
+    elif CASE=='descending':values=[header_row(),item_row(2),item_row(1)]
+    elif CASE=='duplicate_id':values=[header_row(),item_row(1),item_row(1)]
+    elif CASE=='sentinel':values=[header_row()]+[item_row(i) for i in range(1,258)]
+    elif CASE=='late_bool':
+        row=list(item_row(2));row[27]=b'\\x02';values.append(tuple(row))
+    cursor=acquisition_cursor(values)
+    if CASE=='extra':cursor.nextset=lambda:True
+    expect(E.INVALID_OBSERVATION,lambda:native._materialize(cursor,request,cursor.pgresult.descriptor,op,max_page_payload_bytes=16777216),True)
+    assert not seen
+    if CASE=='sentinel':assert cursor.pgresult.copies==[]
+    print('MANAGED_BODY_COMPLETE')
+    """)
+    )
+
+
+def test_w05_execution_uses_supported_local_arrays_float_and_per_value_int8():
+    run_w05("""
+    L,x,actual,c,r,a,t,b=setup()
+    original_start=m._start_operation
+    def start(*args,**kwargs):
+        original_start(*args,**kwargs)
+        return request
+    m._start_operation=start
+    m._operation_profile=lambda *args,**kwargs:op
+    m._operation_max_page_payload_bytes=lambda *args,**kwargs:2**32
+    Cursor.result=acquisition_cursor([header_row()],2**32).pgresult
+    original_parameters=request.parameters
+    op.decode_rows=lambda request,rows:17
+    native.execute(t,b,execution_ledger=L)
+    cursor=Cursor.instances[-1]
+    params=cursor.calls[0][1]
+    assert len(params)==8 and type(params[-1]) is Int8 and params[-1]==2**32
+    assert type(params[1]) is list and type(params[2]) is list
+    assert tuple(params[1])==original_parameters[1] and tuple(params[2])==original_parameters[2]
+    assert all(a is b for a,b in zip(params[1],original_parameters[1]))
+    assert all(a is b for a,b in zip(params[2],original_parameters[2]))
+    assert all(params[i] is original_parameters[i] for i in (0,3,4,5,6))
+    assert request.parameters is original_parameters
+    assert cursor.adapters.dumpers[int] is Int4BinaryDumper
+    assert cursor.adapters.dumpers[float] is FloatBinaryDumper
+    assert cursor.adapters.dumpers[list] is ListBinaryDumper
+    assert cursor.adapters.dumpers[Int8] is Int8BinaryDumper
+    assert int not in actual.adapters.dumpers
+    assert m.read_result(b,execution_ledger=L)==17 and not L.uncertainty.present
+    print('MANAGED_BODY_COMPLETE')
+    """)
+
+
+@pytest.mark.parametrize("fault", ["nfields", "name", "oid", "format", "width", "cap"])
+def test_w05_metadata_and_cap_reject_before_payload_copy(fault):
+    run_w05(
+        "FAULT="
+        + repr(fault)
+        + "\n"
+        + textwrap.dedent("""
+    cursor=acquisition_cursor([header_row()])
+    result=cursor.pgresult
+    if FAULT=='nfields':result.nfields-=1
+    elif FAULT=='name':result.fname=lambda index:b'wrong'
+    elif FAULT=='oid':result.ftype=lambda index:25
+    elif FAULT=='format':result.fformat=lambda index:0
+    elif FAULT=='width':result.fsize=lambda index:999
+    elif FAULT=='cap':result.values=[(b'\\x00',)+header_row()[1:]]
+    expect(E.INVALID_OBSERVATION,lambda:native._materialize(cursor,request,result.descriptor,op,max_page_payload_bytes=16777216),True)
+    assert not seen
+    assert result.copies==([(0,0)] if FAULT=='cap' else [])
+    print('MANAGED_BODY_COMPLETE')
+    """)
+    )
+
+
+@pytest.mark.parametrize("phase", ["execute", "copy", "decode", "close"])
+def test_w05_original_baseexception_is_held_without_publication(phase):
+    run_w05(
+        "PHASE="
+        + repr(phase)
+        + "\n"
+        + textwrap.dedent("""
+    L,x,actual,c,r,a,t,b=setup()
+    original_start=m._start_operation
+    def start(*args,**kwargs):
+        original_start(*args,**kwargs)
+        return request
+    m._start_operation=start
+    m._operation_profile=lambda *args,**kwargs:op
+    m._operation_max_page_payload_bytes=lambda *args,**kwargs:16777216
+    Cursor.result=acquisition_cursor([header_row()]).pgresult
+    primary=KeyboardInterrupt('NONSECRET_W05_PRIMARY')
+    cause=ValueError('NONSECRET_CAUSE')
+    primary.__cause__=cause;primary.__suppress_context__=True
+    def fail(*args,**kwargs):raise primary
+    if PHASE=='execute':Cursor.effect=fail
+    elif PHASE=='copy':Cursor.result.get_value=fail
+    elif PHASE=='decode':op.decode_rows=fail
+    else:Cursor.close_effect=fail
+    try:native.execute(t,b,execution_ledger=L)
+    except BaseException as caught:
+        assert caught is primary and caught.__cause__ is cause and caught.__suppress_context__
+    else:raise AssertionError('lost primary')
+    ticket=m._ticket(t,L)
+    assert ticket.operation['state']=='HELD'
+    assert ticket.roots[t._subject]['state']=='UNKNOWN' and L.uncertainty.present
+    expect(E.RESOURCE_BUSY,lambda:m.read_result(b,execution_ledger=L),True)
+    expect(E.RESOURCE_BUSY,lambda:m.release_result(b,execution_ledger=L),True)
+    print('MANAGED_BODY_COMPLETE')
+    """)
+    )
