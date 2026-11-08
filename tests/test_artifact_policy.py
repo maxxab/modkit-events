@@ -150,6 +150,7 @@ tests/test_resource_lifecycle.py
 tests/test_scope_storage.py
 tests/test_sqlalchemy.py
 tests/test_standalone_package.py
+tests/test_work_listing_sql.py
 pyproject.toml
 README.md
 LICENSE

@@ -1,12 +1,12 @@
 # E30 bounded work listing candidate
 
-Status: BOUNDED SQL VERIFIED; NOT_READY for package integration or release. This directory is inert design/source material, not an installed migration or startup hook. It is intentionally outside the package and existing artifact allowlist. Only the bounded database checks described below are qualified. No E10, native transport, deployment or package-readiness qualification is claimed.
+Status: SOURCE INTEGRATED; NOT_READY for installation or release. The E30 function and listing indexes now live in src/modkit_events/persistence/sql/0001_initial.sql. This directory retains the original reviewed SQL delta and bounded evidence; it is not an installed migration or startup hook. It is intentionally outside the package and existing artifact allowlist. Only the bounded database checks described below are qualified. No E10, native transport, deployment or package-readiness qualification is claimed.
 
 ## Source baseline and integration
 
-This review candidate does not modify the existing Events SQL or import its uncommitted baseline. It is kept outside package installation paths so it cannot run automatically.
+The complete preexisting migration was preserved as an explicitly unqualified baseline import before integrating this delta. Executable SQL is unchanged from the previously checked baseline plus e30.sql; only qualification comments were updated. The original delta is retained here for provenance, while normal source tests target the package migration.
 
-Integration baseline: src/modkit_events/persistence/sql/0001_initial.sql, 290583 bytes, SHA-256 6cf0c7d1fb6baaccf98b5aaf0e3ed15c55c12941c4e73d45d083d948ec9a5534. Integrate only after reviewing the complete migration and preserving concurrent changes. The baseline is not included in this candidate commit.
+Integration baseline: src/modkit_events/persistence/sql/0001_initial.sql, 290583 bytes, SHA-256 6cf0c7d1fb6baaccf98b5aaf0e3ed15c55c12941c4e73d45d083d948ec9a5534. The integration preserves the existing executable baseline and concurrent live work. Importing broader baseline source does not qualify its other operations. Runtime grants and the production manifest remain absent, so the migration loader still fails closed.
 
 ## Design and contract
 
@@ -23,7 +23,7 @@ Reviewed catalog.E30, input bindings, output namespace/order coupling, E15 compo
 1. Add focused ABI, guard, index, bounded-query and no-mutation source tests; record expected missing-candidate failure.
 2. Add the inert SQL delta, without changing the baseline or packaging.
 3. Run source checks, relevant catalog/listing decoder checks and permitted package tests; independently review the current candidate.
-4. Commit only this candidate directory after independent acceptance and preserve all unrelated work. Baseline integration and remaining runtime qualification stay separate.
+4. Commit only this candidate directory after independent acceptance and preserve all unrelated work. This original candidate sequence is complete. Source integration is recorded below; remaining runtime qualification stays separate.
 
 ## Bounded PostgreSQL verification
 
@@ -49,8 +49,21 @@ The ten missing-candidate tests failed before SQL implementation, then all ten p
 
 Run the focused source checks from this checkout with:
 
-    python -m pytest docs/sql-candidates/e30-work-listing/test_source.py -q
+    python -m pytest tests/test_work_listing_sql.py -q
 
 Independent source review accepted the exact SQL candidate without correctness findings. Its focused verification passed 12 tests (the ten SQL source guards and two existing E30 decoding/bounded-demand checks), with 69 tests deselected.
 
-The Python checks protect the source contract; the separate SQL fixtures provide only the bounded runtime coverage listed above. The candidate is not included in the wheel or source-distribution packaging paths. No package version, migration manifest, runtime grant, readiness result or public API has changed.
+The Python checks protect the source contract; the separate SQL fixtures provide only the bounded runtime coverage listed above. The package migration is now included by the existing package build configuration, and tests/test_work_listing_sql.py is listed in the sdist inventory. The historical delta and runtime fixtures in this directory remain outside distribution paths. No package version, migration manifest, runtime grant, readiness result or public API has changed.
+
+## Source integration
+
+The ordinary Events test lane checks the integrated E30 ABI, secure read-only
+properties, input guards, bounded branches, both indexes and the Events-owned
+package resource. The source checks do not execute PostgreSQL or import Workers.
+The initial package migration now contains E30 and the W03 discovery index;
+Workers owns its W03 function and verifies that index separately.
+
+The previous bounded PostgreSQL result applies to the identical executable SQL.
+No additional database run or E10 call is needed merely to move these bytes into
+the package. Missing operations, grants, the manifest, complete installation,
+transport, and release qualification remain open.

@@ -1,6 +1,6 @@
 {
-  "status": "BOUNDED_SQL_VERIFIED_NOT_READY_FOR_INTEGRATION_OR_RELEASE",
-  "scope": "Inert E30 and W03 listing index candidate with isolated PostgreSQL tests; no live migration or package integration.",
+  "status": "SOURCE_INTEGRATED_NOT_READY_FOR_INSTALLATION_OR_RELEASE",
+  "scope": "E30 and Events-owned listing indexes integrated into the package initial migration; prior bounded PostgreSQL evidence retained.",
   "source_file": "e30.sql",
   "source_sha256": "4d58bd96fb715f7660b45f04765021db3b2a1e1fb4bb64814e700dbd1be13c9f",
   "baseline_sha256": "6cf0c7d1fb6baaccf98b5aaf0e3ed15c55c12941c4e73d45d083d948ec9a5534",
@@ -28,6 +28,17 @@
     "No actual job rows in the partial-index scenario; mixed-job W03 results remain unqualified.",
     "Timestamp-dominant ordering across different timestamps and concurrent changes not exercised.",
     "Structural inbox fixtures do not qualify admission or lifecycle.",
-    "Native transport, integrated grants/installations, migrations and package release remain NOT_READY."
-  ]
+    "Native transport, integrated grants/installations, complete migration qualification and package release remain NOT_READY."
+  ],
+  "integration": {
+    "resource": "src/modkit_events/persistence/sql/0001_initial.sql",
+    "sha256": "9b8c948b6abfc1b3c117a1adaa1b243d8bc7debdcc5ca41eaa6e0f1a791185ac",
+    "baseline_sha256": "6cf0c7d1fb6baaccf98b5aaf0e3ed15c55c12941c4e73d45d083d948ec9a5534",
+    "executable_sql": "Identical to the previously checked baseline plus e30.sql; broader baseline remains unqualified and only status comments changed.",
+    "tests": "tests/test_work_listing_sql.py",
+    "release": "NOT_READY: grants, manifest and remaining qualification are absent.",
+    "source_checks": "10 passed against the package resource; copied-test staging reproduced 10 missing-resource failures before using importlib.resources, then 10 passed.",
+    "base_suite": "197 passed, 30 skipped, 267 subtests passed; unavailable optional Pydantic module explicitly excluded.",
+    "full_suite": "Collection blocked by unavailable pydantic; no dependency installed."
+  }
 }

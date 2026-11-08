@@ -1,19 +1,19 @@
 """Source guards only. They neither parse nor execute PostgreSQL."""
 import re
-from pathlib import Path
+from importlib.resources import files
 
 import pytest
 
 from modkit_events.persistence.catalog import CardinalityKind, WireType, get_statement
 
-PATH = Path(__file__).with_name("e30.sql")
+PATH = files("modkit_events.persistence.sql").joinpath("0001_initial.sql")
 TYPES = {kind: kind.value for kind in WireType}
 TYPES[WireType.BYTEA_ARRAY] = "bytea[]"
 TYPES[WireType.INT4_ARRAY] = "int4[]"
 
 
 def sql():
-    assert PATH.is_file(), "E30 SQL candidate is missing"
+    assert PATH.is_file(), "Events package migration is missing"
     return PATH.read_text(encoding="utf-8")
 
 
@@ -83,8 +83,5 @@ def test_matching_listing_indexes_and_job_filter():
     assert source.index("CREATE INDEX work_namespace_created_page") < source.index("CREATE FUNCTION modkit_events.e30")
 
 
-def test_candidate_has_no_installation_or_readiness_claim():
-    source = sql()
-    assert "NOT_READY" in source
-    assert "schema_versions" not in source and "manifest.json" not in source
-    assert "CREATE SCHEMA" not in source and "CREATE TABLE" not in source
+def test_events_migration_has_no_reverse_workers_dependency():
+    assert "modkit_workers" not in sql()
