@@ -161,6 +161,7 @@ tests/test_publication_claim_sql.py
 tests/test_publication_renewal_sql.py
 tests/test_publication_intent_sql.py
 tests/test_publication_settlement_sql.py
+tests/test_publication_recovery_sql.py
 pyproject.toml
 README.md
 LICENSE
