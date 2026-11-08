@@ -18,6 +18,7 @@
 ### Documentation
 
 - clarify one-way Events and Workers dependency (`956f1d74e24e`)
+- regenerate changelog after audit readers (`39132b145833`)
 
 ### Testing
 
