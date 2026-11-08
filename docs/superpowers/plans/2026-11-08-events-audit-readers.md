@@ -21,7 +21,7 @@ Direct SELECT without checks would expose malformed retained records; calling E1
 - [x] Append the three SQL functions to the package migration, leaving the complete baseline prefix unchanged. Include the new test in both artifact inventories.
 - [x] Run source checks, relevant decoder contracts and the available base test lane. Existing unavailable Pydantic remains an explicit collection limitation.
 - [x] Independent review and QA of the actual diff; fix concrete findings. Any PostgreSQL execution uses a new disposable fixture, never old V65.
-- [ ] Commit the narrow reviewed delta, regenerate deterministic changelog and validate commit range. No push/release.
+- [x] Commit the narrow reviewed delta, regenerate deterministic changelog and validate commit range. No push/release.
 
 ## Review focus
 - Strict continuation at missing/high cursor values without duplicated rows.

@@ -8,6 +8,7 @@
 - **contracts:** add explicit event and subscription contracts (`59b922a36864`)
 - **sql:** prepare bounded work listing candidate (`8e9cf5384149`)
 - **sql:** integrate bounded work listing migration (`e518749a50da`)
+- **sql:** add bounded audit history readers (`aeb2284aa19b`)
 
 ### Bug Fixes
 
