@@ -1,7 +1,11 @@
 """Code-only errors with immediate-exit exception-chain detachment."""
+from collections.abc import Callable
 from enum import Enum
 from functools import wraps
-from typing import NoReturn
+from typing import NoReturn, ParamSpec, TypeVar
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 
 class _ValidationReject(Exception):
@@ -41,7 +45,7 @@ class PersistenceError(Exception):
         super().__init__(code.value)
 
 
-def _fail(code, *, unconfirmed):
+def _fail(code: ErrorCode, *, unconfirmed: bool) -> NoReturn:
     try:
         raise PersistenceError(code, unconfirmed=unconfirmed)
     except PersistenceError as error:
@@ -50,9 +54,11 @@ def _fail(code, *, unconfirmed):
         raise
 
 
-def _decorate(function, code, unconfirmed):
+def _decorate(
+    function: Callable[_P, _T], code: ErrorCode, unconfirmed: bool
+) -> Callable[_P, _T]:
     @wraps(function)
-    def checked(*args, **kwargs):
+    def checked(*args: _P.args, **kwargs: _P.kwargs) -> _T:
         try:
             return function(*args, **kwargs)
         except Exception:
@@ -61,11 +67,11 @@ def _decorate(function, code, unconfirmed):
     return checked
 
 
-def _boundary(function):
+def _boundary(function: Callable[_P, _T]) -> Callable[_P, _T]:
     return _decorate(function, ErrorCode.LOCAL_INVALID_ARGUMENT, False)
 
 
-def _observation_boundary(function):
+def _observation_boundary(function: Callable[_P, _T]) -> Callable[_P, _T]:
     return _decorate(function, ErrorCode.INVALID_OBSERVATION, True)
 
 

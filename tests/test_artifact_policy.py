@@ -150,7 +150,9 @@ tests/test_native_execution.py
 tests/native/test_native_observation_integration.py
 tests/test_native_sql_descriptor.py
 tests/test_outbox.py
+tests/test_persistence_boundaries.py
 tests/test_persistence_contracts.py
+tests/typecheck_persistence_boundaries.py
 tests/test_redis.py
 tests/test_redis_boundaries.py
 tests/test_resource_lifecycle.py

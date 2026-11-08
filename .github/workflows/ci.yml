@@ -59,6 +59,11 @@ jobs:
       - run: python -m pytest -q
       - run: python -m ruff check src tests examples scripts
       - run: python -m ruff format --check src tests examples scripts
+      - name: Check persistence boundary consumer types
+        run: >-
+          python -m mypy src/modkit_events/persistence/errors.py
+          tests/typecheck_persistence_boundaries.py
+          --follow-imports=silent --warn-unused-ignores
       - run: python -m mypy src/modkit_events --ignore-missing-imports
       - run: python -m build
       - run: python -m twine check dist/*

@@ -111,6 +111,11 @@ jobs:
     - run: python -m pip install -r requirements-dev.txt
     - run: python -m ruff check src tests examples scripts
     - run: python -m ruff format --check src tests examples scripts
+    - name: Check persistence boundary consumer types
+      run: >-
+        python -m mypy src/modkit_events/persistence/errors.py
+        tests/typecheck_persistence_boundaries.py
+        --follow-imports=silent --warn-unused-ignores
     - run: python -m mypy src/modkit_events --ignore-missing-imports
     - run: python -m pytest -q
     - run: python scripts/release_verify.py test --directory release-input --project "$PROJECT" --sha "$SOURCE_SHA"
