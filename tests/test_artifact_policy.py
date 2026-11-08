@@ -153,6 +153,7 @@ tests/test_standalone_package.py
 tests/test_work_listing_sql.py
 tests/test_audit_readers_sql.py
 tests/test_publication_history_sql.py
+tests/test_publication_claim_sql.py
 pyproject.toml
 README.md
 LICENSE

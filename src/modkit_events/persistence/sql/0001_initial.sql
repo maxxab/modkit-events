@@ -5176,3 +5176,214 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e29(pg_catalog.bytea,pg_catalog.int8,pg_catalog.int4) FROM PUBLIC;
+
+-- E22: bounded pending publication claim. E26 owns expired-lease reclamation.
+CREATE FUNCTION modkit_events.e22(
+    p_limit pg_catalog.int4,p_lease_seconds pg_catalog.float8,
+    p_scan_after pg_catalog.bytea,p_discovery_budget pg_catalog.int4
+)
+RETURNS TABLE(
+    record_type pg_catalog.text,visited pg_catalog.int4,next_cursor pg_catalog.bytea,pass_exhausted pg_catalog.bool,
+    event_id pg_catalog.bytea,canonical_version pg_catalog.int4,
+    envelope_evidence pg_catalog.bytea,replay_input pg_catalog.bytea,
+    state pg_catalog.text,token pg_catalog.uuid,ownership_revision pg_catalog.int8,
+    lease_until pg_catalog.timestamptz,intent_id pg_catalog.uuid,
+    receipt pg_catalog.bytea,outcome_evidence pg_catalog.bytea,
+    created_at pg_catalog.timestamptz,updated_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    discovered pg_catalog.record;
+    captured pg_catalog.record;
+    locked_outbox modkit_events.outbox%ROWTYPE;
+    fresh_outbox modkit_events.outbox%ROWTYPE;
+    expected_outbox modkit_events.outbox%ROWTYPE;
+    updated_outbox modkit_events.outbox%ROWTYPE;
+    emitted_rows modkit_events.outbox[];
+    emitted modkit_events.outbox%ROWTYPE;
+    cursor_value pg_catalog.bytea;
+    visited_count pg_catalog.int4 := 0;
+    item_count pg_catalog.int4 := 0;
+    exhausted_value pg_catalog.bool := FALSE;
+    final_time pg_catalog.timestamptz;
+    candidate_lease pg_catalog.timestamptz;
+    next_revision pg_catalog.int8;
+    claim_token pg_catalog.uuid;
+    affected pg_catalog.int8;
+    history_id_value pg_catalog.int8;
+    lease_wire pg_catalog.bytea;
+    exponent_bits pg_catalog.int4;
+    significand pg_catalog.int8;
+    numerator pg_catalog.numeric;
+    denominator pg_catalog.numeric;
+    byte_index pg_catalog.int4;
+    bit_index pg_catalog.int4;
+    lease_us pg_catalog.int8;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 256
+       OR p_discovery_budget IS NULL OR p_discovery_budget NOT BETWEEN 1 AND 4096
+       OR p_discovery_budget<p_limit
+       OR (p_scan_after IS NOT NULL AND pg_catalog.octet_length(p_scan_after)<>32)
+       OR (p_lease_seconds>0::pg_catalog.float8 AND p_lease_seconds<=3600::pg_catalog.float8) IS NOT TRUE THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid publication claim arguments';
+    END IF;
+
+    -- Exact ceil of the represented positive binary64 duration, not float multiplication.
+    lease_wire := pg_catalog.float8send(p_lease_seconds);
+    IF pg_catalog.octet_length(lease_wire)<>8 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='unexpected float8 representation';
+    END IF;
+    exponent_bits := ((pg_catalog.get_byte(lease_wire,0)&127)<<4)|(pg_catalog.get_byte(lease_wire,1)>>4);
+    IF exponent_bits <= 1002 THEN
+        lease_us := 1;
+    ELSE
+        significand := (pg_catalog.get_byte(lease_wire,1)&15)::pg_catalog.int8;
+        FOR byte_index IN 2..7 LOOP
+            significand := significand*256+pg_catalog.get_byte(lease_wire,byte_index);
+        END LOOP;
+        significand := significand+4503599627370496;
+        numerator := significand::pg_catalog.numeric * 1000000::pg_catalog.numeric;
+        denominator := 1::pg_catalog.numeric;
+        FOR bit_index IN 1..(1075-exponent_bits) LOOP
+            denominator := denominator*2;
+        END LOOP;
+        lease_us := pg_catalog.div(numerator+denominator-1,denominator)::pg_catalog.int8;
+    END IF;
+    IF lease_us IS NULL OR lease_us<1 OR lease_us>3600000000 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid quantized lease';
+    END IF;
+
+    cursor_value := p_scan_after;
+    emitted_rows := ARRAY[]::modkit_events.outbox[];
+    WHILE visited_count<p_discovery_budget AND item_count<p_limit LOOP
+        -- Count raw identities, including ineligible and locked rows. This is
+        -- cursor progress, not a certificate that every skipped row is sound.
+        IF cursor_value IS NULL THEN
+            SELECT listed.event_digest,listed.event_id,listed.state
+              INTO discovered FROM modkit_events.outbox AS listed
+              ORDER BY listed.event_digest LIMIT 1;
+        ELSE
+            SELECT listed.event_digest,listed.event_id,listed.state
+              INTO discovered FROM modkit_events.outbox AS listed
+              WHERE listed.event_digest>cursor_value
+              ORDER BY listed.event_digest LIMIT 1;
+        END IF;
+        IF NOT FOUND THEN
+            exhausted_value := TRUE;
+            EXIT;
+        END IF;
+        IF discovered.event_digest IS NULL OR pg_catalog.octet_length(discovered.event_digest)<>32 THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid discovered publication cursor';
+        END IF;
+        visited_count := visited_count+1;
+        cursor_value := discovered.event_digest;
+        IF (discovered.state COLLATE pg_catalog."C"='pending') IS NOT TRUE THEN
+            CONTINUE;
+        END IF;
+
+        SELECT stored.* INTO locked_outbox FROM modkit_events.outbox AS stored
+            WHERE stored.event_digest=discovered.event_digest FOR NO KEY UPDATE OF stored SKIP LOCKED;
+        IF NOT FOUND THEN
+            IF NOT EXISTS(SELECT 1 FROM modkit_events.outbox AS stored
+                          WHERE stored.event_digest=discovered.event_digest) THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing discovered publication';
+            END IF;
+            CONTINUE;
+        END IF;
+        -- This identifier comes from storage, not from a caller argument.
+        IF modkit_events._utf8_valid(locked_outbox.event_id,256,TRUE) IS NOT TRUE
+           OR locked_outbox.event_digest IS DISTINCT FROM discovered.event_digest
+           OR locked_outbox.event_id IS DISTINCT FROM discovered.event_id THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication identity changed during acquisition';
+        END IF;
+
+        -- One fresh calling-query snapshot under the mutex. E28 supplies the
+        -- complete existing integrity contract; no STABLE reader follows DML.
+        WITH checked AS MATERIALIZED (
+            SELECT observed.* FROM modkit_events.e28(locked_outbox.event_id) AS observed
+        )
+        SELECT (SELECT pg_catalog.count(*) FROM checked) AS selected_count,
+               stored AS current_outbox,observed.event_id AS checked_event_id
+          INTO captured
+          FROM modkit_events.outbox AS stored
+          LEFT JOIN checked AS observed ON TRUE
+          WHERE stored.event_digest=locked_outbox.event_digest;
+        IF NOT FOUND OR captured.selected_count IS DISTINCT FROM 1
+           OR captured.checked_event_id IS DISTINCT FROM locked_outbox.event_id THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing full publication observation';
+        END IF;
+        fresh_outbox := captured.current_outbox;
+        IF fresh_outbox IS DISTINCT FROM locked_outbox
+           OR pg_catalog.convert_to(fresh_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(locked_outbox.state,'UTF8') THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication changed under held lock';
+        END IF;
+        locked_outbox := fresh_outbox;
+        IF (locked_outbox.state COLLATE pg_catalog."C"='pending') IS NOT TRUE THEN
+            CONTINUE;
+        END IF;
+        -- As in E04, leave a successor revision instead of claiming an
+        -- exhausted record. Reclamation is a separate operation.
+        IF locked_outbox.ownership_revision>=9223372036854775806::pg_catalog.int8 THEN
+            CONTINUE;
+        END IF;
+        final_time := pg_catalog.clock_timestamp();
+        IF modkit_events._instant_bytes(final_time) IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid final database time';
+        END IF;
+        candidate_lease := final_time+(INTERVAL '1 microsecond' * lease_us::pg_catalog.float8);
+        IF candidate_lease<=final_time OR modkit_events._instant_bytes(candidate_lease) IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid selected publication lease';
+        END IF;
+        next_revision := locked_outbox.ownership_revision+1;
+        claim_token := pg_catalog.gen_random_uuid();
+        IF claim_token IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing publication token';
+        END IF;
+        expected_outbox := locked_outbox;
+        expected_outbox.state := 'claimed';
+        expected_outbox.token := claim_token;
+        expected_outbox.ownership_revision := next_revision;
+        expected_outbox.lease_until := candidate_lease;
+        expected_outbox.updated_at := final_time;
+        UPDATE modkit_events.outbox AS stored SET state='claimed',token=claim_token,
+            ownership_revision=next_revision,lease_until=candidate_lease,updated_at=final_time
+            WHERE stored.event_digest=locked_outbox.event_digest
+            RETURNING stored.* INTO updated_outbox;
+        GET DIAGNOSTICS affected=ROW_COUNT;
+        IF affected<>1 OR updated_outbox IS DISTINCT FROM expected_outbox
+           OR pg_catalog.convert_to(updated_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_outbox.state,'UTF8') THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication update postimage mismatch';
+        END IF;
+        INSERT INTO modkit_events.publication_history AS stored
+            (event_id,intent_id,operation_id,status,receipt,evidence,binding,recorded_at)
+            VALUES(updated_outbox.event_id,NULL,NULL,
+                'claim_publication',NULL,''::pg_catalog.bytea,''::pg_catalog.bytea,final_time)
+            RETURNING stored.history_id INTO history_id_value;
+        GET DIAGNOSTICS affected=ROW_COUNT;
+        IF affected<>1 OR history_id_value IS NULL OR history_id_value<=0 THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication history receipt';
+        END IF;
+        emitted_rows := pg_catalog.array_append(emitted_rows,updated_outbox);
+        item_count := item_count+1;
+    END LOOP;
+    IF visited_count=p_discovery_budget OR item_count=p_limit THEN
+        exhausted_value := FALSE;
+    END IF;
+    RETURN QUERY SELECT 'header'::pg_catalog.text,visited_count,cursor_value,exhausted_value,
+        NULL::pg_catalog.bytea,NULL::pg_catalog.int4,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,
+        NULL::pg_catalog.text,NULL::pg_catalog.uuid,NULL::pg_catalog.int8,NULL::pg_catalog.timestamptz,
+        NULL::pg_catalog.uuid,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,
+        NULL::pg_catalog.timestamptz,NULL::pg_catalog.timestamptz;
+    FOREACH emitted IN ARRAY emitted_rows LOOP
+        RETURN QUERY SELECT 'item'::pg_catalog.text,NULL::pg_catalog.int4,NULL::pg_catalog.bytea,NULL::pg_catalog.bool,
+            emitted.event_id,emitted.canonical_version,emitted.envelope_evidence,emitted.replay_input,
+            emitted.state,emitted.token,emitted.ownership_revision,emitted.lease_until,emitted.intent_id,
+            emitted.receipt,emitted.outcome_evidence,emitted.created_at,emitted.updated_at;
+    END LOOP;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e22(pg_catalog.int4,pg_catalog.float8,pg_catalog.bytea,pg_catalog.int4) FROM PUBLIC;
