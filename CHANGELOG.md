@@ -25,6 +25,7 @@
 - **persistence:** add cooperative work cancellation (`55f88ddd6e61`)
 - **persistence:** support native job identity lookup (`0a39e72d619b`)
 - **persistence:** add bounded work recovery (`c66e48c8de62`)
+- **persistence:** support bounded native job acquisition (`2b14c34c188e`)
 
 ### Bug Fixes
 
