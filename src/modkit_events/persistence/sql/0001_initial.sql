@@ -5530,3 +5530,119 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e23(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.float8) FROM PUBLIC;
+
+-- E24: persist caller-stable intent before any external publication I/O.
+CREATE FUNCTION modkit_events.e24(
+    p_event_id pg_catalog.bytea,p_token pg_catalog.uuid,
+    p_ownership_revision pg_catalog.int8,p_intent_id pg_catalog.uuid
+)
+RETURNS TABLE(ok pg_catalog.bool)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    captured pg_catalog.record;
+    locked_outbox modkit_events.outbox%ROWTYPE;
+    fresh_outbox modkit_events.outbox%ROWTYPE;
+    expected_outbox modkit_events.outbox%ROWTYPE;
+    updated_outbox modkit_events.outbox%ROWTYPE;
+    final_time pg_catalog.timestamptz;
+    post_update_time pg_catalog.timestamptz;
+    affected pg_catalog.int8;
+    history_id_value pg_catalog.int8;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF modkit_events._utf8_valid(p_event_id,256,TRUE) IS NOT TRUE
+       OR p_token IS NULL OR p_ownership_revision IS NULL OR p_ownership_revision<=0
+       OR p_intent_id IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid publication intent arguments';
+    END IF;
+
+    -- Digest discovery does not hide a different-full-ID alias from E28.
+    PERFORM stored.event_digest FROM modkit_events.outbox AS stored
+        WHERE stored.event_digest=pg_catalog.sha256(p_event_id) FOR NO KEY UPDATE OF stored;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale publication fence';
+    END IF;
+    -- New command snapshot after a potentially blocking lock acquisition.
+    SELECT stored.* INTO locked_outbox FROM modkit_events.outbox AS stored
+        WHERE stored.event_digest=pg_catalog.sha256(p_event_id);
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale publication fence';
+    END IF;
+    IF locked_outbox.token IS DISTINCT FROM p_token
+       OR locked_outbox.ownership_revision IS DISTINCT FROM p_ownership_revision THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale publication fence';
+    END IF;
+    IF (locked_outbox.state COLLATE pg_catalog."C"='claimed') IS NOT TRUE THEN
+        RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='invalid publication state';
+    END IF;
+
+    -- One complete preimage validator under the mutex, before any write.
+    WITH checked AS MATERIALIZED (
+        SELECT observed.* FROM modkit_events.e28(p_event_id) AS observed
+    )
+    SELECT (SELECT pg_catalog.count(*) FROM checked) AS selected_count,
+           stored AS current_outbox,observed.event_id AS checked_event_id
+      INTO captured
+      FROM modkit_events.outbox AS stored
+      LEFT JOIN checked AS observed ON TRUE
+      WHERE stored.event_digest=locked_outbox.event_digest;
+    IF NOT FOUND OR captured.selected_count IS DISTINCT FROM 1
+       OR captured.checked_event_id IS DISTINCT FROM p_event_id THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing full publication observation';
+    END IF;
+    fresh_outbox := captured.current_outbox;
+    IF fresh_outbox IS DISTINCT FROM locked_outbox
+       OR pg_catalog.convert_to(fresh_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(locked_outbox.state,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication changed under held lock';
+    END IF;
+    locked_outbox := fresh_outbox;
+    -- Entering the external-I/O phase requires one future ownership revision.
+    IF locked_outbox.ownership_revision=9223372036854775807::pg_catalog.int8 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='ownership revision exhausted';
+    END IF;
+    final_time := pg_catalog.clock_timestamp();
+    IF modkit_events._instant_bytes(final_time) IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid final database time';
+    END IF;
+    IF final_time>=locked_outbox.lease_until THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='publication lease expired';
+    END IF;
+
+    expected_outbox := locked_outbox;
+    expected_outbox.state := 'publishing';
+    expected_outbox.intent_id := p_intent_id;
+    expected_outbox.updated_at := final_time;
+    -- The existing UNIQUE intent constraint rejects cross-event reuse atomically.
+    UPDATE modkit_events.outbox AS stored SET state='publishing',intent_id=p_intent_id,updated_at=final_time
+        WHERE stored.event_digest=locked_outbox.event_digest
+        RETURNING stored.* INTO updated_outbox;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 OR updated_outbox IS DISTINCT FROM expected_outbox
+       OR pg_catalog.convert_to(updated_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_outbox.state,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication update postimage mismatch';
+    END IF;
+    -- UNIQUE intent enforcement can wait on another event's transaction.
+    -- If it rolls back, recheck liveness before any history sequence allocation.
+    post_update_time := pg_catalog.clock_timestamp();
+    IF modkit_events._instant_bytes(post_update_time) IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid post-update database time';
+    END IF;
+    IF post_update_time>=locked_outbox.lease_until THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='publication lease expired after update';
+    END IF;
+    INSERT INTO modkit_events.publication_history AS stored
+        (event_id,intent_id,operation_id,status,receipt,evidence,binding,recorded_at)
+        VALUES(updated_outbox.event_id,updated_outbox.intent_id,NULL,
+            'publication_intent',NULL,''::pg_catalog.bytea,''::pg_catalog.bytea,final_time)
+        RETURNING stored.history_id INTO history_id_value;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 OR history_id_value IS NULL OR history_id_value<=0 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication history receipt';
+    END IF;
+    RETURN QUERY SELECT TRUE;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e24(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.uuid) FROM PUBLIC;
