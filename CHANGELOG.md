@@ -23,6 +23,7 @@
 - **publication:** add bounded per-item batch outcomes (`c593371b39fb`)
 - **persistence:** support bounded native job listing (`e28ec011a04b`)
 - **persistence:** add cooperative work cancellation (`55f88ddd6e61`)
+- **persistence:** support native job identity lookup (`0a39e72d619b`)
 
 ### Bug Fixes
 
