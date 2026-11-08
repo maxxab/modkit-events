@@ -9,6 +9,8 @@ from modkit_events.persistence.errors import _ValidationReject
 from uuid import UUID
 from dataclasses import replace
 def profile(key):
+    if key=='W04':
+        return P.WorkersNativeOperation(statement=WC.get_statement(key),request_type=WM.JobFindRequest,build_request=WB._find_jobs_raw,decode_rows=WR._decode_find_raw,validate_result=WR._validate_find_result_raw,result_types=(WO.JobRecord,WO.JobDetails,WO.JobPayload,WO.JobCandidate,WO.JobIdentityObservation,WO.JobIdentityDecision))
     if key=='W03':
         return P.WorkersNativeOperation(statement=WC.get_statement(key),request_type=WM.JobListRequest,build_request=WB._list_jobs_raw,decode_rows=WR._decode_list_raw,validate_result=WR._validate_list_result_raw,result_types=(WO.JobRecord,WO.JobDetails,WO.JobPayload))
     submit=key=='W01'
@@ -313,3 +315,92 @@ rejected(lambda:N._selected_sql_descriptor(C.get_statement('E14'),max_page_paylo
 print('MANAGED_BODY_COMPLETE')
 """
     )
+
+# Literal W04 ABI: independent of SQL generation and descriptors.
+_EXPECTED_W04 = (
+    _EXPECTED_W02[0],
+    ("kind", "text", False, 5),
+    *_EXPECTED_W02[2:56],
+    ("job_half_present", "bool", False, 1),
+    *((name, kind, True, cap) for name, kind, nullable, cap in _EXPECTED_W02[56:]),
+)
+
+
+def test_w04_fixed_sql_and_transport_literal_contract():
+    """Breaks on W02 job-only guards, a shifted flag, or uncapped output."""
+    _run(
+        "EXPECTED=" + repr(_EXPECTED_W04) + "\n" + r"""
+import re
+from modkit_events.persistence import native_codec as N
+assert hasattr(N, '_W04_SQL'), 'fixed W04 SQL missing'
+assert hasattr(N, '_W04_COLUMNS'), 'fixed W04 columns missing'
+sql=N._W04_SQL
+assert len(EXPECTED)==72 and len(N._W04_COLUMNS)==73
+assert sql.startswith(b'WITH source AS MATERIALIZED (')
+assert b'FROM modkit_workers.w04($1::pg_catalog.uuid, $2::pg_catalog.text, $3::pg_catalog.bytea, $4::pg_catalog.bytea, $5::pg_catalog.bytea, $6::pg_catalog.bytea, $7::pg_catalog.bytea) AS s' in sql
+assert sql.endswith(b'ORDER BY c.work_id\nLIMIT 3')
+assert b'$8' not in sql and b'w02(' not in sql and b'pg_catalog.sum' not in sql
+assert b's.job_half_present' in sql and b'c.job_half_present,\n       c.job_work_id' in sql
+oids={'uuid':2950,'text':17,'bytea':17,'bool':16,'int4':23,'int8':20,'xid8':5069,'timestamptz':1184}
+for col,(name,kind,nullable,cap) in zip(N._W04_COLUMNS[1:],EXPECTED):
+    assert (col.name,col.wire_type.value,col.oid,col.nullable,col.max_payload_bytes)==(name,'bytea' if kind=='text' else kind,oids[kind],nullable,cap)
+    if kind in ('text','bytea'):
+        expr='s.'+name if kind=='bytea' else "pg_catalog.convert_to(s."+name+", 'UTF8')"
+        check='(s.'+name+(' IS NULL OR ' if nullable else ' IS NOT NULL AND ')+'pg_catalog.octet_length('+expr+') OPERATOR(pg_catalog.<=) '+str(cap)+')'
+        assert check.encode() in sql, name
+        expr='c.'+name if kind=='bytea' else "pg_catalog.convert_to(c."+name+", 'UTF8')"
+        assert ('CASE WHEN c.cap_ok THEN '+expr+' ELSE NULL::pg_catalog.bytea END AS '+name).encode() in sql, name
+assert sum(c.max_payload_bytes for c in N._W04_COLUMNS)==14688734
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+@workers_companion
+def test_w04_descriptor_and_binary_preflight_with_real_consumer_request():
+    """Real consumer request feeds the fixed descriptor and complete binary preflight."""
+    from test_native_workers_profile import _JOB_SETUP
+
+    _run(_JOB_SETUP + _PROFILE + r"""
+from modkit_events.persistence import native_codec as N
+from modkit_events.persistence.errors import _ValidationReject
+def reject(fn):
+    try:fn()
+    except _ValidationReject:pass
+    else:raise AssertionError('invalid wire accepted')
+op=profile('W04');request=op.build_request(WM.JobFindRequest(job=job({})));spec=op.statement
+plan=N._selected_sql_descriptor(spec,op,request=request)
+assert plan.sql is N._W04_SQL and plan.transport_columns is N._W04_COLUMNS
+assert plan.canonical_columns is spec.result.columns
+assert plan.parameter_casts==('pg_catalog.uuid','pg_catalog.text')+('pg_catalog.bytea',)*5
+assert plan.cardinality is C.CardinalityKind.FIND_TWO and plan.sentinel_limit==3
+assert plan.max_admitted_cell_payload_bytes==14688735
+reject(lambda:N._selected_sql_descriptor(spec,op,max_page_payload_bytes=1))
+row=[b'\x01']
+for col in plan.transport_columns[1:]:
+    row.append(None if col.nullable else (b'x' if col.wire_type is C.WireType.BYTEA else (1).to_bytes(col.max_payload_bytes,'big')))
+row[2]=b'inbox';row[57]=b'\x00'
+decoded=N._decode_binary_transport_row(spec,tuple(row),op,request=request)
+assert len(decoded)==72 and decoded[1]=='inbox' and decoded[56] is False
+assert decoded[57:]==(None,)*15
+for i,col in enumerate(plan.transport_columns[1:],1):
+    changed=list(row)
+    if col.wire_type is C.WireType.BYTEA:
+        changed[i]=b'x'*col.max_payload_bytes
+        N._decode_binary_transport_row(spec,tuple(changed),op,request=request)
+        changed[i]+=b'x'
+        reject(lambda:N._decode_binary_transport_row(spec,tuple(changed),op,request=request))
+    else:
+        for size in (col.max_payload_bytes-1,col.max_payload_bytes+1):
+            changed[i]=bytes(size)
+            reject(lambda:N._decode_binary_transport_row(spec,tuple(changed),op,request=request))
+for value in (None,b'',b'\x02',b'\xff'):
+    changed=list(row);changed[57]=value
+    reject(lambda:N._decode_binary_transport_row(spec,tuple(changed),op,request=request))
+changed=list(row);changed[2]=b'\xff'
+reject(lambda:N._decode_binary_transport_row(spec,tuple(changed),op,request=request))
+def forbidden(*a,**k):raise AssertionError('conversion before suffix preflight')
+N.UUID=forbidden
+changed=list(row);changed[-1]=b'x'*1048577
+reject(lambda:N._decode_binary_transport_row(spec,tuple(changed),op,request=request))
+print('MANAGED_BODY_COMPLETE')
+""")

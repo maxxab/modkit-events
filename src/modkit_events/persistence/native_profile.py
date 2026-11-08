@@ -1,4 +1,4 @@
-"""Fixed import-neutral Workers W01/W02/W03 semantic and retained graph profile.
+"""Fixed import-neutral Workers W01/W02/W03/W04 semantic and retained graph profile.
 
 No Workers import, driver, I/O, registration, or arbitrary graph traversal.
 Startup component provenance is cooperative, not authentication of Python code.
@@ -6,6 +6,7 @@ Startup component provenance is cooperative, not authentication of Python code.
 
 from dataclasses import Field, dataclass, fields
 from datetime import datetime, timezone
+from enum import Enum, EnumType
 from sys import getsizeof
 from types import FunctionType
 from uuid import UUID
@@ -60,15 +61,15 @@ def _shape(statement):
         reject()
     if (
         type(statement.parameters) is not tuple
-        or len(statement.parameters) not in (1, 4, 29)
+        or len(statement.parameters) not in (1, 4, 7, 29)
         or type(statement.result) is not C.ResultSpec
         or type(statement.result.columns) is not tuple
-        or len(statement.result.columns) not in (2, 71)
+        or len(statement.result.columns) not in (2, 71, 72)
     ):
         reject()
     C._validate_statement_spec(statement, _reject=reject)
     C._validate_result_spec(statement.result, _reject=reject)
-    if statement.key not in ("W01", "W02", "W03"):
+    if statement.key not in ("W01", "W02", "W03", "W04"):
         reject()
     for value in statement.parameters:
         C._validate_parameter_spec(value, _reject=reject)
@@ -83,6 +84,18 @@ def _shape(statement):
             (c.name, c.wire_type, c.nullable) for c in C.get_statement("E03").result.columns
         )
         record, cardinality, mutation = C.RecordKind.ADMISSION, C.CardinalityKind.EXACT_ONE, True
+    elif statement.key == "W04":
+        params = tuple((p.name, p.wire_type, p.nullable) for p in C.get_statement("E17").parameters)
+        cols = (
+            tuple((c.name, c.wire_type, c.nullable) for c in C.get_statement("E15").result.columns)
+            + (("job_half_present", C.WireType.BOOL, False),)
+            + tuple((name, wire, True) for name, wire, _ in _JOB)
+        )
+        record, cardinality, mutation = (
+            C.RecordKind.JOB_CANDIDATE,
+            C.CardinalityKind.FIND_TWO,
+            False,
+        )
     else:
         params = (
             (("work_id", C.WireType.UUID, False),)
@@ -156,14 +169,21 @@ def _validate_operation(operation):
     _shape(operation.statement)
     submit = operation.statement.key == "W01"
     listing = operation.statement.key == "W03"
+    finding = operation.statement.key == "W04"
     _carrier(
         operation.request_type,
         "modkit_workers.persistence.models",
-        "JobSubmitRequest" if submit else "JobListRequest" if listing else "JobReadRequest",
-        ("job",) if submit else ("after", "limit") if listing else ("work_id",),
+        "JobSubmitRequest"
+        if submit
+        else "JobFindRequest"
+        if finding
+        else "JobListRequest"
+        if listing
+        else "JobReadRequest",
+        ("job",) if submit or finding else ("after", "limit") if listing else ("work_id",),
     )
     if type(operation.result_types) is not tuple or len(operation.result_types) != (
-        1 if submit else 3
+        1 if submit else 6 if finding else 3
     ):
         reject()
     result_shapes = (
@@ -175,14 +195,26 @@ def _validate_operation(operation):
             ("JobPayload", _PAYLOAD),
         )
     )
+    if finding:
+        result_shapes += (
+            ("JobCandidate", ("work", "job")),
+            ("JobIdentityObservation", ("decision", "candidates", "original_work_id")),
+        )
+        _decision_enum(operation.result_types[5])
     for cls, (name, names) in zip(operation.result_types, result_shapes):
         _carrier(cls, "modkit_workers.persistence.observations", name, names)
-    suffix = "submit" if submit else "list" if listing else "read"
+    suffix = "submit" if submit else "find" if finding else "list" if listing else "read"
     callbacks = (
         (
             operation.build_request,
             "bindings",
-            "_submit_raw" if submit else "_list_jobs_raw" if listing else "_read_job_raw",
+            "_submit_raw"
+            if submit
+            else "_find_jobs_raw"
+            if finding
+            else "_list_jobs_raw"
+            if listing
+            else "_read_job_raw",
         ),
         (operation.decode_rows, "rows", "_decode_" + suffix + "_raw"),
         (operation.validate_result, "rows", "_validate_" + suffix + "_result_raw"),
@@ -197,6 +229,41 @@ def _validate_operation(operation):
             or callback.__name__ != name
             or callback.__defaults__ is not None
             or callback.__kwdefaults__ is not None
+        ):
+            reject()
+
+
+def _decision_enum(cls):
+    """Fixed cooperative enum provenance, without calling enum/user hooks."""
+    if type(cls) is not EnumType:
+        reject()
+    namespace = vars(cls)
+    members = namespace.get("_member_map_")
+    if (
+        cls.__bases__ != (Enum,)
+        or type(cls.__module__) is not str
+        or type(cls.__name__) is not str
+        or cls.__module__ != "modkit_workers.persistence.observations"
+        or cls.__name__ != "JobIdentityDecision"
+        or cls.__sizeof__ is not object.__sizeof__
+        or cls.__getattribute__ is not object.__getattribute__
+        or type(members) is not dict
+        or any(type(name) is not str for name in members)
+        or tuple(members) != ("NEW", "MATCH", "CONFLICT")
+    ):
+        reject()
+    for name, expected in (("NEW", "new"), ("MATCH", "match"), ("CONFLICT", "conflict")):
+        member = members[name]
+        if type(member) is not cls:
+            reject()
+        value = object.__getattribute__(member, "_value_")
+        member_name = object.__getattribute__(member, "_name_")
+        if (
+            type(value) is not str
+            or value != expected
+            or type(member_name) is not str
+            or member_name != name
+            or namespace.get(name) is not member
         ):
             reject()
 
@@ -265,6 +332,14 @@ def _parameters(statement, parameters, context):
     projected = B._admission_values_raw(expected)
     if expected.identity.kind is not M.WorkKind.JOB or expected.identity.namespace != "jobs":
         reject()
+    if statement.key == "W04":
+        if expected.identity.subscription_id is not None or context.readiness is not None:
+            reject()
+        if any(
+            projected[spec.name] != value for spec, value in zip(statement.parameters, parameters)
+        ):
+            reject()
+        return
     material = B._decode_protected_binding_raw(expected.protected_binding)
     projected.update(
         material_state=material.material_state.value,
@@ -429,11 +504,68 @@ def _result_size(request, value, operation, *, max_page_payload_bytes=None):
             payload_bytes += _job_payload_size(record)
             if payload_bytes > max_page_payload_bytes:
                 reject()
+    elif operation.statement.key == "W04":
+        size = _find_result_size(value, operation)
     elif value is None:
         size = getsizeof(None)
     else:
         size = _job_result_size(value, operation)
     operation.validate_result(request, value)
+    return size
+
+
+def _find_result_size(value, operation):
+    """Only the fixed W04 observation/candidate graph, including work aliases."""
+    if (
+        type(value) is not operation.result_types[4]
+        or type(value.decision) is not operation.result_types[5]
+        or type(value.candidates) is not tuple
+        or len(value.candidates) > 2
+        or (
+            value.original_work_id is not None
+            and (type(value.original_work_id) is not str or len(value.original_work_id) != 36)
+        )
+    ):
+        reject()
+    members = vars(operation.result_types[5])["_member_map_"]
+    if not any(value.decision is member for member in members.values()):
+        reject()
+    size = (
+        getsizeof(value)
+        + getsizeof(value.decision)
+        + getsizeof(value.candidates)
+        + _storage(value.original_work_id)
+    )
+    for candidate in value.candidates:
+        if type(candidate) is not operation.result_types[3]:
+            reject()
+        size += getsizeof(candidate) + _work_result_size(candidate.work)
+        size += (
+            getsizeof(None) if candidate.job is None else _job_result_size(candidate.job, operation)
+        )
+    return size
+
+
+def _work_result_size(work):
+    """Preflight a fixed work-only candidate, including its full resolution."""
+    if type(work) is not O.WorkObservation:
+        reject()
+    columns = C.get_statement("E15").result.columns
+    scalars = []
+    for col in columns[:39]:
+        scalar = getattr(work, col.name)
+        _scalar(scalar, col.wire_type, col.nullable, col.name)
+        scalars.append(scalar)
+    resolution = work.resolution
+    if resolution is not None:
+        if type(resolution) is not O.ResolutionObservation:
+            reject()
+        for col in columns[40:]:
+            scalar = getattr(resolution, col.name[len("resolution_record_") :])
+            _scalar(scalar, col.wire_type, col.nullable, col.name)
+            scalars.append(scalar)
+    size = getsizeof(work) + getsizeof(resolution) + sum(_storage(v) for v in scalars)
+    # The consumer validates W04 semantics after this complete fixed preflight.
     return size
 
 
@@ -566,10 +698,10 @@ def _preparation_capacity(operation, *, max_page_payload_bytes=None):
         + getsizeof((None,) * len(operation.statement.parameters))
         + _column_upper(operation.statement.parameters)
         + _carrier_upper(B.ReturnContext)
-        + getsizeof((None,) if operation.statement.key == "W01" else ())
+        + getsizeof((None,) if operation.statement.key in ("W01", "W04") else ())
         + getsizeof(None)  # The retained ReturnContext.readiness referent.
     )
-    if operation.statement.key == "W01":
+    if operation.statement.key in ("W01", "W04"):
         size += sum(
             _carrier_upper(cls) for cls in (M.AdmissionInput, M.WorkIdentity, M.ScopeEvidence)
         )
@@ -605,6 +737,8 @@ def result_capacity(
         )
     if operation.statement.key == "W02":
         return _job_result_capacity(operation)
+    if operation.statement.key == "W04":
+        return _find_result_capacity(operation)
     n = _result_row_limit(request, operation)
     # Exact preallocated page lists coexist with their one tuple conversion.
     page_containers = getsizeof((None,) * n) + getsizeof([None] * n)
@@ -636,7 +770,13 @@ def _result_row_limit(request, operation, /):
     """Use the retained validated request, never an independent caller count."""
     _validate_operation(operation)
     validate_request(request, operation.statement)
-    return request.parameters[3] if operation.statement.key == "W03" else 1
+    return (
+        request.parameters[3]
+        if operation.statement.key == "W03"
+        else 2
+        if operation.statement.key == "W04"
+        else 1
+    )
 
 
 def _binary_upper(column):
@@ -658,7 +798,7 @@ def _binary_upper(column):
 
 def _job_result_capacity(operation):
     # R: unchanged W02 finite JobRecord graph upper bound.
-    size = sum(_carrier_upper(cls) for cls in operation.result_types)
+    size = sum(_carrier_upper(cls) for cls in operation.result_types[:3])
     size += _carrier_upper(O.WorkObservation) + _carrier_upper(O.ResolutionObservation)
     size += _column_upper(C.get_statement("E15").result.columns[:39]) + _column_upper(
         C.get_statement("E15").result.columns[40:]
@@ -675,3 +815,36 @@ def _job_result_capacity(operation):
     )
     size += getsizeof(M.MaterialState.PRESENT) + getsizeof(M.CleanupPolicy.RETAIN)
     return size
+
+
+def _work_result_capacity():
+    columns = C.get_statement("E15").result.columns
+    return (
+        _carrier_upper(O.WorkObservation)
+        + _carrier_upper(O.ResolutionObservation)
+        + _column_upper(columns[:39])
+        + _column_upper(columns[40:])
+    )
+
+
+def _find_result_capacity(operation):
+    # Fixed two-candidate graph; work is charged again even when aliased by job.
+    containers = getsizeof((None,) * 2) + getsizeof([None] * 2)
+    typed = (
+        _carrier_upper(operation.result_types[4])
+        + getsizeof(operation.result_types[5].NEW)
+        + _upper(C.WireType.TEXT, 36)
+        + containers
+        + 2
+        * (
+            _carrier_upper(operation.result_types[3])
+            + _work_result_capacity()
+            + _job_result_capacity(operation)
+        )
+    )
+    columns = operation.statement.result.columns
+    canonical = containers + 2 * (getsizeof((None,) * len(columns)) + _column_upper(columns))
+    transport = getsizeof((None,) * (len(columns) + 1)) + getsizeof(b"") + 1
+    transport += sum(max(getsizeof(None), _binary_upper(col)) for col in columns)
+    sentinel = getsizeof((None,) * 3) + 3 * transport
+    return typed + canonical + sentinel

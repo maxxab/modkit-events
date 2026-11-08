@@ -200,13 +200,13 @@ cross-broker/database transaction and no implicit lease-renewal service.
 
 ## Native PostgreSQL transport status
 
-**Bounded W01/W02/W03 native, helper and W05 dependency checks passed; full
+**Bounded W01/W02/W03/W04 native, helper and W05 dependency checks passed; full
 native qualification remains incomplete (NOT_READY).** The W01 submission and W02 status
 extension has passed independent source review and focused source validation. It uses the existing Events
 controller and the caller's original READ COMMITTED root, with fixed statement
 profiles, bounded request/context retention, and fully validated typed results.
 It adds no second controller or Events dependency on Workers. This does not
-qualify W04/W05 native profiles or a generic native transport.
+qualify the W05 native profile or a generic native transport.
 
 Workers selects the extension through its `prepare_submit` and `prepare_read_job`
 wrappers. Admission, result reservation, execution and release remain explicit.
@@ -249,6 +249,31 @@ possible sensitive log values.
 A separately accepted disposition confirms graceful shutdown and non-force
 removal of the W03 fixture, with container and owned socket directory absence
 verified.
+
+Workers `prepare_find_jobs` adds W04 identity lookup on the same caller-owned
+root. It retains seven lookup parameters and one comparison-only admission
+context, then returns a complete NEW/MATCH/CONFLICT observation containing zero
+to two candidates. A direct-ID inbox collision is a valid conflict with no job
+half; lookup does not submit or acquire work. The existing pure find API is
+unchanged.
+
+Focused W04 native checks passed seven cases covering absent lookup, direct and
+key matches, immutable-input conflict, two-job conflict, genuine inbox collision
+and a mixed inbox/job family, checking all 72 canonical fields. Caller-root and
+staged visibility, explicit rollback and genuine `PZ005` exception identity with
+HELD/UNKNOWN accounting passed. The same run completed graceful shutdown and
+non-force fixture removal. On the measured interpreter, fixed request/result
+reservations are 3,156,870 and 119,667,132 bytes: about 117.134 MiB per operation,
+or 937.073 MiB for eight concurrent operations, before other controller backing.
+Configure ledger capacity and concurrency accordingly; these are logical
+reservations, not allocation or RSS measurements. Borrowed references remain
+caller-managed and must be dropped before result release.
+
+W04 positive resolved-lifecycle, terminal, concurrency, cancellation and
+maximum-cell native cases were not run in this focused proof. Source controls
+cover additional malformed-family, full-resolution and error paths; they are
+not database qualification. Broader native/ORM and release readiness remain
+NOT_READY.
 
 The first real W01/W02 qualification attempt did **not** pass. Initial submission,
 a complete protected-record read and a missing read returned before an identical

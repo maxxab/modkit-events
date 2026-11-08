@@ -527,7 +527,7 @@ def _validate_work_observation_core(self, *, _reject=None):
 
         if (
             type(self.kind) is not str
-            or self.kind != "job"
+            or self.kind not in ("job", "inbox")
             or type(self.replay_policy) is not str
             or self.replay_policy not in ("disabled", "application_safe")
         ):

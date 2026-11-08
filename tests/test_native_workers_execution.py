@@ -32,7 +32,7 @@ def setup_workers(key='W02',values=(),*,limit=1,after=None,budget=16777216):
     elif key=='W02':logical=WM.JobReadRequest(work_id=str(UUID(int=1)))
     else:
         material=M.ProtectedBindingInput(material_state=M.MaterialState.ABSENT,codec=None,key_version=None,expires_at=None,cleanup_policy=M.CleanupPolicy.RETAIN,sidecar=None,reference=None,content_binding=b'',recovery_metadata=b'',projection_metadata={})
-        logical=WM.JobSubmitRequest(job=WM.JobInput(str(UUID(int=1)),'task',1,S.Scope('app'),{},original_available_at=datetime(2026,1,1,tzinfo=timezone.utc),protected=material))
+        logical=(WM.JobFindRequest if key=='W04' else WM.JobSubmitRequest)(job=WM.JobInput(str(UUID(int=1)),'task',1,S.Scope('app'),{},original_available_at=datetime(2026,1,1,tzinfo=timezone.utc),protected=material,idempotency_key='key' if key=='W04' else None))
     a=native.prepare_component(x,op,logical,execution_ledger=L,max_page_payload_bytes=budget if key=='W03' else None)
     req=m._preparations[a._stamp]['data']
     t=m.admit(root,a,execution_ledger=L)
@@ -50,10 +50,10 @@ _ROW_HELPER = r"""
 def full_row(op,work_id=1,payload=None):
     now=datetime(2026,1,1,tzinfo=timezone.utc)
     material=M.ProtectedBindingInput(material_state=M.MaterialState.ABSENT,codec=None,key_version=None,expires_at=None,cleanup_policy=M.CleanupPolicy.RETAIN,sidecar=None,reference=None,content_binding=b'',recovery_metadata=b'',projection_metadata={})
-    logical=WM.JobSubmitRequest(job=WM.JobInput(str(UUID(int=work_id)),'task',1,S.Scope('app'),{} if payload is None else payload,original_available_at=now,protected=material))
+    logical=WM.JobSubmitRequest(job=WM.JobInput(str(UUID(int=work_id)),'task',1,S.Scope('app'),{} if payload is None else payload,original_available_at=now,protected=material,idempotency_key="key" if op.statement.key=="W04" else None))
     submit=WB._submit_raw(logical)
     data=dict((p.name,value) for p,value in zip(submit.statement.parameters,submit.parameters))
-    data.update(runnable_version=1,state='queued',cancellation_requested=False,token=None,ownership_revision=0,lease_until=None,available_at=now,cycle=1,attempt_count=0,dispatch_id=None,result=None,created_at=now,updated_at=now,success_origin=None,completion_guard_id=None,final_fence_at=None,completion_result_digest=None,resolution_operation_id=None,terminal_resolution_operation_id=None,resolution_present=False,job_work_id=UUID(int=work_id),job_application=b'app',job_tenant=None,job_owner=None,job_protected_binding=data['protected_binding'],job_semantic_input=data['semantic_input'])
+    data.update(job_half_present=True,runnable_version=1,state='queued',cancellation_requested=False,token=None,ownership_revision=0,lease_until=None,available_at=now,cycle=1,attempt_count=0,dispatch_id=None,result=None,created_at=now,updated_at=now,success_origin=None,completion_guard_id=None,final_fence_at=None,completion_result_digest=None,resolution_operation_id=None,terminal_resolution_operation_id=None,resolution_present=False,job_work_id=UUID(int=work_id),job_application=b'app',job_tenant=None,job_owner=None,job_protected_binding=data['protected_binding'],job_semantic_input=data['semantic_input'])
     values=[]
     epoch=datetime(2000,1,1,tzinfo=timezone.utc)
     for col in op.statement.result.columns:
@@ -673,4 +673,123 @@ def test_w03_received_pz013_preserves_driver_identity_and_held_lifetime():
     assert m._counts['D']>=1
     assert_held(t,L,b)
     print('MANAGED_BODY_COMPLETE')
+""")
+
+_W04_HELPERS = r"""
+def set_rows(wire_rows):
+    Cursor.result.values=wire_rows;Cursor.result.ntuples=len(wire_rows)
+    Cursor.result.command_tuples=len(wire_rows)
+    Cursor.result.command_status=('SELECT '+str(len(wire_rows))).encode()
+
+def inbox_row(op,req):
+    from dataclasses import replace
+    from modkit_events.persistence import bindings as B
+    from modkit_events.models import Event
+    admission=req.context.expected[0]
+    identity=replace(admission.identity,kind=M.WorkKind.INBOX,subscription_id='subscriber')
+    incoming=replace(admission,identity=identity,semantic_input=B.canonical_event(Event('event','task',{})).content,replay_input=b'{"event_id":"event","name":"task","schema_version":1,"payload":{},"metadata":{}}')
+    row=list(full_row(op))
+    row[2]=b'inbox';row[3]=b'subscriber'
+    row[14]=B.canonical_intent(incoming).content
+    row[15]=incoming.semantic_input;row[16]=incoming.replay_input
+    row[57]=b'\x00';row[58:]=[None]*15
+    return tuple(row)
+"""
+
+
+@pytest.mark.parametrize("case", ["empty", "match", "pair", "inbox"])
+@workers_companion
+def test_w04_real_consumer_publishes_complete_family_after_close(case):
+    run("CASE="+repr(case)+"\n"+_W04_HELPERS+r"""
+L,x,actual,c,r,a,t,b,op,req=setup_workers('W04')
+wire_rows=[] if CASE=='empty' else ([inbox_row(op,req)] if CASE=='inbox' else [full_row(op,i) for i in range(1,3 if CASE=='pair' else 2)])
+set_rows(wire_rows)
+setter=m.set_result;seen=[]
+def inspect(handle,value,**kwargs):
+    assert Cursor.instances[-1].closed
+    assert type(value) is WO.JobIdentityObservation
+    seen.append(value);return setter(handle,value,**kwargs)
+m.set_result=inspect
+native.execute(t,b,execution_ledger=L)
+value=m.read_result(b,execution_ledger=L)
+assert value is seen[0] and len(seen)==1
+assert value.decision is (WO.JobIdentityDecision.NEW if CASE=='empty' else WO.JobIdentityDecision.MATCH if CASE=='match' else WO.JobIdentityDecision.CONFLICT)
+assert len(value.candidates)==len(wire_rows)
+if CASE=='inbox':assert value.candidates[0].work.kind=='inbox' and value.candidates[0].job is None
+assert Cursor.instances[-1].calls[0][1] is req.parameters and len(req.parameters)==7
+assert len(Cursor.result.copies)==73*len(wire_rows)
+assert not L.uncertainty.present and m._counts['D']==0
+print('MANAGED_BODY_COMPLETE')
+""")
+
+
+@pytest.mark.parametrize("fault", ["cap", "third", "last_name", "last_oid", "last_format", "last_size", "extra", "suffix", "utf8", "flag", "missing_half", "inbox_half", "duplicate", "reverse"])
+@workers_companion
+def test_w04_rejects_whole_family_without_publishing_first_candidate(fault):
+    run("FAULT="+repr(fault)+"\n"+_W04_HELPERS+r"""
+L,x,actual,c,r,a,t,b,op,req=setup_workers('W04')
+wire_rows=[full_row(op,1),full_row(op,2)]
+if FAULT=='third':wire_rows.append(full_row(op,3))
+elif FAULT.startswith('last_'):
+    method={'last_name':'fname','last_oid':'ftype','last_format':'fformat','last_size':'fsize'}[FAULT]
+    original=getattr(Cursor.result,method)
+    setattr(Cursor.result,method,lambda index:original(index) if index!=72 else 'bad')
+elif FAULT=='extra':Cursor.extra=True
+elif FAULT=='duplicate':wire_rows[1]=wire_rows[0]
+elif FAULT=='reverse':wire_rows.reverse()
+else:
+    changed=list(wire_rows[1])
+    if FAULT=='cap':changed[0]=b'\x00'
+    elif FAULT=='suffix':changed[-1]=b'bad canonical framing'
+    elif FAULT=='utf8':changed[2]=b'\xff'
+    elif FAULT=='flag':changed[57]=b'\x02'
+    elif FAULT=='missing_half':changed[58:]=[None]*15
+    else:
+        changed=list(inbox_row(op,req));changed[-1]=b'not null'
+        wire_rows=wire_rows[:1]
+    wire_rows[-1]=tuple(changed)
+set_rows(wire_rows)
+capacity=m._results[b._stamp]['capacity']
+expect(E.INVALID_OBSERVATION,lambda:native.execute(t,b,execution_ledger=L),True)
+assert not m._results[b._stamp]['populated']
+assert m._results[b._stamp]['capacity']==capacity
+assert_held(t,L,b)
+if FAULT=='third' or FAULT.startswith('last_'):assert Cursor.result.copies==[]
+print('MANAGED_BODY_COMPLETE')
+""")
+
+
+@pytest.mark.parametrize("fault", ["PZ012", "PZ002", "PZ005", "cancel", "late_cancel"])
+@workers_companion
+def test_w04_original_error_identity_and_paid_lifetime_survive(fault):
+    run("FAULT="+repr(fault)+"\n"+_W04_HELPERS+r"""
+L,x,actual,c,r,a,t,b,op,req=setup_workers('W04')
+set_rows([full_row(op,1),full_row(op,2)])
+capacity=m._results[b._stamp]['capacity']
+class DriverError(Exception):pass
+primary=KeyboardInterrupt('cancel') if 'cancel' in FAULT else DriverError('server failure')
+primary.sqlstate=FAULT;primary.diag=object();diag=primary.diag
+cause=ValueError('cause');context=LookupError('context')
+primary.__cause__=cause;primary.__context__=context;primary.__suppress_context__=True
+def fail(cursor):
+    actual.pgconn.transaction_status=TransactionStatus.INERROR
+    raise primary
+if FAULT=='late_cancel':
+    decoder=native._decode_binary_transport_row;calls=[]
+    def decode(*args,**kwargs):
+        calls.append(True)
+        if len(calls)==2:raise primary
+        return decoder(*args,**kwargs)
+    native._decode_binary_transport_row=decode
+else:Cursor.effect=fail
+try:native.execute(t,b,execution_ledger=L)
+except BaseException as caught:
+    assert caught is primary and caught.sqlstate==FAULT and caught.diag is diag
+    assert caught.__cause__ is cause and caught.__context__ is context and caught.__suppress_context__
+else:raise AssertionError('original error lost')
+assert len(Cursor.instances)==1 and len(Cursor.instances[0].calls)==1
+assert not m._results[b._stamp]['populated']
+assert m._results[b._stamp]['capacity']==capacity and m._counts['D']>=1
+assert_held(t,L,b)
+print('MANAGED_BODY_COMPLETE')
 """)

@@ -716,7 +716,7 @@ def _ticket(token, ledger):
 
 
 def _listing_capacity_error(preparation, capacity):
-    """Known W03 rejection stays local; unexpected failures keep paid D."""
+    """Known W03/W04 rejection stays local; unexpected failures keep paid D."""
     from .native_profile import _validate_operation
     from .native_profile import result_capacity as profile_capacity
 
@@ -725,7 +725,7 @@ def _listing_capacity_error(preparation, capacity):
         return None
     try:
         _validate_operation(profile)
-        if profile.statement.key == "W03":
+        if profile.statement.key in ("W03", "W04"):
             minimum = profile_capacity(
                 profile,
                 request=preparation["data"],

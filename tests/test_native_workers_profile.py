@@ -364,7 +364,7 @@ def test_unselected_companion_case_skips_without_workers_path():
         + "::test_selected_profile_freezes_exact_graph_and_pins_finite_capacity"
     )
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", target],
+        [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", target],
         env=environment,
         capture_output=True,
         text=True,
@@ -767,6 +767,463 @@ assert size>exact
 try:P._result_size(request,(record,),op,max_page_payload_bytes=exact-1)
 except _ValidationReject as error:assert type(error) is _ValidationReject
 else:raise AssertionError('Q+1 retained graph accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_find_freeze_retains_only_seven_parameters_and_admission():
+    # Breaks if W04 is refused or accepts a mismatched projection/context.
+    _run(
+        _JOB_SETUP
+        + """
+from modkit_events.persistence.errors import _ValidationReject
+from dataclasses import replace
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+statement=WC.get_statement('W04')
+parameters=submit.parameters[:7]
+request=P.freeze_request(statement,parameters,context=submit.context)
+assert len(statement.result.columns)==72
+assert request.parameters is parameters and request.context is submit.context
+assert len(request.context.expected)==1 and request.context.readiness is None
+assert statement.result.record is C.RecordKind.JOB_CANDIDATE
+assert statement.result.cardinality is C.CardinalityKind.FIND_TWO
+for args,context in ((parameters[:-1],submit.context), ((UUID(int=2),)+parameters[1:],submit.context), (parameters,B._return_context_raw())):
+    try:P.freeze_request(statement,args,context=context)
+    except _ValidationReject:pass
+    else:raise AssertionError('invalid find projection/context accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+_FIND_SETUP = (
+    _JOB_SETUP
+    + """
+from types import FunctionType
+# Profile-only provenance controls while the consumer source is independently
+# owned. These callback bodies are never used to build or decode W04.
+def renamed(callback,name):
+    result=FunctionType(callback.__code__,callback.__globals__,name)
+    result.__module__=callback.__module__
+    return result
+def finding():
+    return P.WorkersNativeOperation(statement=WC.get_statement('W04'),request_type=WM.JobFindRequest,build_request=renamed(WB._read_job_raw,'_find_jobs_raw'),decode_rows=renamed(WR._decode_read_raw,'_decode_find_raw'),validate_result=renamed(WR._validate_read_result_raw,'_validate_find_result_raw'),result_types=(WO.JobRecord,WO.JobDetails,WO.JobPayload,WO.JobCandidate,WO.JobIdentityObservation,WO.JobIdentityDecision))
+def find_request():
+    submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+    return P.freeze_request(WC.get_statement('W04'),submit.parameters[:7],context=submit.context)
+"""
+)
+
+
+@workers_companion
+def test_find_operation_pins_carriers_enum_and_fixed_capacities():
+    # Breaks if six result types are treated as job carriers or enum hooks run.
+    _run(
+        _FIND_SETUP
+        + """
+from dataclasses import replace
+from enum import Enum
+from modkit_events.persistence.errors import _ValidationReject
+op=finding();request=find_request()
+assert P._result_row_limit(request,op)==2
+assert P._preparation_capacity(op)==3156870
+assert P._request_size(request,op)<=P._preparation_capacity(op)
+assert P.result_capacity(op)==119667132
+for change in (dict(request_type=WM.JobSubmitRequest), dict(result_types=op.result_types[:3]), dict(result_types=op.result_types[:5]+(M.WorkKind,)), dict(build_request=WB._submit_raw)):
+    try:replace(op,**change)
+    except _ValidationReject:pass
+    else:raise AssertionError('invalid W04 operation accepted')
+for call in (lambda:P.result_capacity(op,max_page_payload_bytes=1),lambda:P._preparation_capacity(op,max_page_payload_bytes=1)):
+    try:call()
+    except _ValidationReject:pass
+    else:raise AssertionError('W04 accepted Q')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+@pytest.mark.parametrize("count,resolved", [(0, False), (1, False), (1, True), (2, True)])
+def test_find_fixed_graph_charges_alias_occurrences_and_full_resolution(count, resolved):
+    # Breaks when candidate.work is omitted because it aliases job.work.
+    _run(
+        _FIND_SETUP
+        + f"count={count};resolved={resolved!r}\n"
+        + """
+from dataclasses import fields
+from sys import getsizeof
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+candidates=[]
+for index in range(count):
+    row=list(read_row(submit,resolved));ident=UUID(int=index+1)
+    row[0]=row[56]=ident
+    if resolved:row[42]=ident
+    record=WR._decode_read_raw(WB._read_job_raw(WM.JobReadRequest(work_id=str(ident))),(tuple(row),))
+    candidate=object.__new__(WO.JobCandidate)
+    object.__setattr__(candidate,'work',record.work);object.__setattr__(candidate,'job',record)
+    candidates.append(candidate)
+value=object.__new__(WO.JobIdentityObservation)
+object.__setattr__(value,'decision',WO.JobIdentityDecision.NEW if not count else WO.JobIdentityDecision.CONFLICT)
+object.__setattr__(value,'candidates',tuple(candidates));object.__setattr__(value,'original_work_id',None)
+# Test-only independent occurrence walker over the exact fixture's dataclasses.
+# Production must use its fixed graph, never this generic traversal.
+def measure(value):
+    size=getsizeof(value)
+    if type(value) is tuple:return size+sum(measure(item) for item in value)
+    if hasattr(type(value),'__dataclass_fields__'):return size+sum(measure(getattr(value,field.name)) for field in fields(value))
+    return size+getsizeof(value.int) if type(value) is UUID else size
+assert P._find_result_size(value,finding())==measure(value)
+assert measure(value)<=P.result_capacity(finding())
+if candidates:
+    object.__setattr__(candidates[0],'job',None)
+    # Structural preflight handles the optional half; consumer owns semantics.
+    assert P._find_result_size(value,finding())==measure(value)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_find_graph_rejects_hostile_scalars_before_size_hooks():
+    _run(
+        _FIND_SETUP
+        + """
+from modkit_events.persistence.errors import _ValidationReject
+op=finding()
+value=object.__new__(WO.JobIdentityObservation)
+object.__setattr__(value,'decision',WO.JobIdentityDecision.NEW)
+object.__setattr__(value,'candidates',())
+object.__setattr__(value,'original_work_id',None)
+class Hostile(str):
+    def __sizeof__(self):raise AssertionError('hostile sizeof called')
+for name,bad in (('original_work_id',Hostile('x'*36)),('decision',object()),('candidates',[]),('candidates',(object(),))):
+    previous=getattr(value,name);object.__setattr__(value,name,bad)
+    try:P._find_result_size(value,op)
+    except _ValidationReject:pass
+    else:raise AssertionError('malformed graph accepted')
+    object.__setattr__(value,name,previous)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_find_enum_provenance_rejects_hostile_metadata_without_comparison():
+    _run(
+        _FIND_SETUP
+        + """
+from modkit_events.persistence.errors import _ValidationReject
+class Hostile(str):
+    def __eq__(self,other):raise AssertionError('hostile enum metadata comparison')
+    def __ne__(self,other):raise AssertionError('hostile enum metadata comparison')
+WO.JobIdentityDecision.__module__=Hostile('modkit_workers.persistence.observations')
+try:finding()
+except _ValidationReject:pass
+else:raise AssertionError('hostile enum metadata accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_find_work_only_inbox_and_maximum_resolution_occurrences_are_bounded():
+    _run(
+        _FIND_SETUP
+        + """
+from dataclasses import replace,fields
+from sys import getsizeof
+from modkit_events.persistence.errors import _ValidationReject
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+admission=submit.context.expected[0]
+from modkit_events.models import Event
+identity=replace(admission.identity,kind=M.WorkKind.INBOX,subscription_id='subscriber')
+event=Event('event','task',{})
+incoming=replace(admission,identity=identity,semantic_input=B.canonical_event(event).content,replay_input=b'{"event_id":"event","name":"task","schema_version":1,"payload":{},"metadata":{}}')
+row=list(read_row(submit,True)[:56])
+row[1],row[2]='inbox',b'subscriber'
+row[13]=B.canonical_intent(incoming).content
+row[14],row[15]=incoming.semantic_input,incoming.replay_input
+# Complete successful resolution graph with maximum finite result/evidence/binding.
+from hashlib import sha256
+large=b'x'*1048576
+names=[col.name for col in C.get_statement('E15').result.columns]
+for name in ('result','resolution_record_result','resolution_record_evidence','resolution_record_binding'):
+    row[names.index(name)]=large
+row[names.index('resolution_record_result_digest')]=sha256(large).digest()
+data=dict(zip(names,row))
+resolution={name[18:]:data.pop(name) for name in names if name.startswith('resolution_record_')}
+data.pop('resolution_present')
+data['resolution']=O.ResolutionObservation(**resolution)
+work=O.WorkObservation(**data)
+candidate=object.__new__(WO.JobCandidate)
+object.__setattr__(candidate,'work',work);object.__setattr__(candidate,'job',None)
+value=object.__new__(WO.JobIdentityObservation)
+object.__setattr__(value,'decision',WO.JobIdentityDecision.CONFLICT)
+object.__setattr__(value,'candidates',(candidate,));object.__setattr__(value,'original_work_id',None)
+def measure(value):
+    size=getsizeof(value)
+    if type(value) is tuple:return size+sum(measure(item) for item in value)
+    if hasattr(type(value),'__dataclass_fields__'):return size+sum(measure(getattr(value,field.name)) for field in fields(value))
+    return size+getsizeof(value.int) if type(value) is UUID else size
+op=finding()
+assert P._find_result_size(value,op)==measure(value)
+assert measure(value)<=P.result_capacity(op)
+class Hostile(bytes):
+    def __sizeof__(self):raise AssertionError('work-only sizeof hook')
+for bad in (Hostile(b'x'),b'x'*1048577):
+    object.__setattr__(work.resolution,'evidence',bad)
+    try:P._find_result_size(value,op)
+    except _ValidationReject:pass
+    else:raise AssertionError('hostile/oversized resolution accepted')
+object.__setattr__(work.resolution,'evidence',large)
+loaded={name:module for name,module in tuple(sys.modules.items()) if name.startswith('modkit_workers')}
+for name in loaded:del sys.modules[name]
+assert P._find_result_size(value,op)==measure(value)
+sys.modules.update(loaded)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+_INBOX_SETUP = (
+    _JOB_SETUP
+    + """
+from dataclasses import replace,fields
+from modkit_events.models import Event
+from modkit_events.persistence.rows import _decode_work_observation_raw
+from modkit_events.persistence.errors import _ValidationReject
+submit=WB._submit_raw(WM.JobSubmitRequest(job=job({})))
+original=submit.context.expected[0]
+event=Event('event','task',{'value':1},metadata={'source':'test'})
+inbox=replace(original,identity=replace(original.identity,kind=M.WorkKind.INBOX,subscription_id='subscriber',namespace='foreign'),semantic_input=B.canonical_event(event).content,replay_input=b'{"event_id":"event","name":"task","schema_version":1,"payload":{"value":1},"metadata":{"source":"test"}}')
+def inbox_row(resolved=False):
+    row=list(read_row(submit,resolved)[:56])
+    row[1],row[2],row[3]='inbox',b'subscriber',b'foreign'
+    row[13]=B.canonical_intent(inbox).content
+    row[14],row[15]=inbox.semantic_input,inbox.replay_input
+    return tuple(row)
+def public_work(row):
+    names=[col.name for col in C.get_statement('E15').result.columns]
+    data=dict(zip(names,row))
+    resolution={name[18:]:data.pop(name) for name in names if name.startswith('resolution_record_')}
+    present=data.pop('resolution_present')
+    data['resolution']=O.ResolutionObservation(**resolution) if present else None
+    return O.WorkObservation(**data)
+"""
+)
+
+
+@workers_companion
+@pytest.mark.parametrize("resolved", [False, True])
+def test_raw_inbox_full_observation_matches_public_without_decorated_helpers(resolved):
+    # Breaks if either raw inbox gate remains or event validation uses public wrappers.
+    _run(
+        _INBOX_SETUP
+        + f"resolved={resolved!r}\n"
+        + """
+row=inbox_row(resolved);expected=public_work(row)
+def forbidden(*args,**kwargs):raise AssertionError('decorated event/model helper reached')
+for name in ('validate_event_replay','canonical_event','canonical_json','canonical_intent'):
+    setattr(B,name,forbidden)
+for cls in (M.AdmissionInput,M.WorkIdentity,M.ScopeEvidence,O.WorkObservation,O.ResolutionObservation,Event):
+    cls.__post_init__=forbidden
+actual=_decode_work_observation_raw(row)
+assert actual==expected
+assert actual.work_id is row[0] and actual.semantic_input is row[14]
+assert actual.kind=='inbox' and actual.subscription_id==b'subscriber'
+before=tuple(getattr(actual,field.name) for field in fields(actual))
+O._validate_work_observation_raw(actual)
+assert all(getattr(actual,field.name) is value for field,value in zip(fields(actual),before))
+assert M._validate_admission_input_raw(inbox) is None
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+@pytest.mark.parametrize(
+    "case",
+    [
+        "schema",
+        "name",
+        "semantic",
+        "metadata",
+        "keys",
+        "payload",
+        "subscription",
+        "kind",
+        "intent",
+        "protected",
+        "lifecycle",
+        "resolution",
+    ],
+)
+def test_raw_inbox_rejects_same_full_invariants_as_public(case):
+    _run(
+        _INBOX_SETUP
+        + f"case={case!r}\n"
+        + """
+from modkit_events.persistence.errors import PersistenceError
+row=list(inbox_row(True));names=[col.name for col in C.get_statement('E15').result.columns]
+def put(name,value):row[names.index(name)]=value
+if case=='schema':
+    put('schema_version_decimal',b'2');put('runnable_version',2)
+elif case=='name':put('command_type',b'other')
+elif case=='semantic':put('semantic_input',B.canonical_event(Event('event','task',{'value':1},metadata={'source':'different'})).content)
+elif case=='metadata':put('replay_input',inbox.replay_input.replace(b'{"source":"test"}',b'[]'))
+elif case=='keys':put('replay_input',inbox.replay_input[:-1]+b',"extra":1}')
+elif case=='payload':put('replay_input',inbox.replay_input.replace(b'{"value":1}',b'{"value":NaN}'))
+elif case=='subscription':put('subscription_id',None)
+elif case=='kind':put('kind','other')
+elif case=='intent':put('intent_evidence',b'wrong')
+elif case=='protected':put('protected_binding',b'wrong')
+elif case=='lifecycle':put('attempt_count',2)
+elif case=='resolution':put('resolution_record_result_digest',b'x'*32)
+try:public_work(tuple(row))
+except PersistenceError as error:assert error.code is E.INVALID_OBSERVATION
+else:raise AssertionError('public invalid fixture accepted: '+case)
+try:_decode_work_observation_raw(tuple(row))
+except _ValidationReject as error:assert type(error) is _ValidationReject
+else:raise AssertionError('raw invalid inbox accepted: '+case)
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+@pytest.mark.parametrize("helper", ["_validate_event_replay_raw", "_canonical_event_raw"])
+@pytest.mark.parametrize("cancellation", [False, True])
+def test_raw_inbox_preserves_unexpected_event_helper_exception_identity(helper, cancellation):
+    _run(
+        _INBOX_SETUP
+        + f"helper={helper!r};cancellation={cancellation!r}\n"
+        + """
+row=inbox_row()
+class Cancelled(BaseException):pass
+primary=Cancelled('cancelled') if cancellation else RuntimeError('unexpected event helper')
+cause=ValueError('cause');context=KeyError('context')
+primary.__cause__=cause;primary.__context__=context;primary.__suppress_context__=False
+def broken(*args,**kwargs):raise primary
+setattr(B,helper,broken)
+try:_decode_work_observation_raw(row)
+except BaseException as caught:
+    assert caught is primary
+    assert caught.__cause__ is cause and caught.__context__ is context
+    assert caught.__suppress_context__ is False
+else:raise AssertionError('primary event failure lost')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_raw_inbox_support_does_not_widen_job_only_preparations_or_records():
+    _run(
+        _INBOX_SETUP
+        + """
+context=B._return_context_raw(expected=(inbox,))
+for key,parameters in (('W01',submit.parameters),('W04',submit.parameters[:7])):
+    try:P.freeze_request(WC.get_statement(key),parameters,context=context)
+    except _ValidationReject:pass
+    else:raise AssertionError('inbox admitted into '+key)
+row=inbox_row()+read_row(submit)[56:]
+read=WB._read_job_raw(WM.JobReadRequest(work_id=str(UUID(int=1))))
+listing=WB._list_jobs_raw(WM.JobListRequest(after=None,limit=1))
+for call in (lambda:WR._decode_read_raw(read,(row,)),lambda:WR._decode_list_raw(listing,(row,))):
+    try:call()
+    except _ValidationReject:pass
+    else:raise AssertionError('job-only record accepted inbox')
+# Exact raw enum spelling guard must run before enum construction/user hooks.
+class Hostile(str):
+    def __eq__(self,other):raise AssertionError('kind equality hook')
+    def __ne__(self,other):raise AssertionError('kind inequality hook')
+row=list(inbox_row());row[1]=Hostile('inbox')
+try:_decode_work_observation_raw(tuple(row))
+except _ValidationReject:pass
+else:raise AssertionError('hostile kind accepted')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+_REAL_FIND_SETUP = (
+    _INBOX_SETUP
+    + """
+from modkit_workers.persistence import native_store as WN
+real_op=WN._FIND_JOBS
+assert real_op.build_request is WB._find_jobs_raw
+assert real_op.decode_rows is WR._decode_find_raw
+assert real_op.validate_result is WR._validate_find_result_raw
+logical=WM.JobFindRequest(job=replace(job({}),idempotency_key='key'))
+keyed_submit=WB._submit_raw(WM.JobSubmitRequest(job=logical.job))
+def real_family(case):
+    if case=='new':return ()
+    if case=='inbox':return (inbox_row(True)+(False,)+(None,)*15,)
+    row=list(read_row(keyed_submit,True))
+    if case=='two':row[0]=row[56]=row[42]=UUID(int=2)
+    candidate=tuple(row[:56])+(True,)+tuple(row[56:])
+    if case=='match':return (candidate,)
+    return (inbox_row(True)+(False,)+(None,)*15,candidate)
+"""
+)
+
+
+@workers_companion
+@pytest.mark.parametrize("case", ["new", "match", "inbox", "two"])
+def test_real_find_consumer_validates_full_family_and_matches_public(case):
+    _run(
+        _REAL_FIND_SETUP
+        + f"case={case!r}\n"
+        + """
+request=WB._find_jobs_raw(logical);rows=real_family(case)
+value=WR._decode_find_raw(request,rows)
+public=WR.decode_find(WB.find_jobs(logical),rows)
+assert value==public
+assert value.decision.value=={'new':'new','match':'match','inbox':'conflict','two':'conflict'}[case]
+assert len(value.candidates)==len(rows)
+from sys import getsizeof
+def measure(item):
+    size=getsizeof(item)
+    if type(item) is tuple:return size+sum(measure(child) for child in item)
+    if hasattr(type(item),'__dataclass_fields__'):return size+sum(measure(getattr(item,field.name)) for field in fields(item))
+    return size+getsizeof(item.int) if type(item) is UUID else size
+assert P._result_size(request,value,real_op)==measure(value)
+assert measure(value)<=P.result_capacity(real_op)
+assert request.context.expected[0].identity.kind is M.WorkKind.JOB
+assert len(request.parameters)==7 and len(request.context.expected)==1
+if case in ('inbox','two'):
+    assert value.candidates[0].work.kind=='inbox'
+    assert value.candidates[0].job is None
+if value.candidates:
+    assert value.candidates[-1].work.resolution is not None
+# Classification must be rechecked at the common retained-result boundary.
+object.__setattr__(value,'decision',WO.JobIdentityDecision.MATCH if case=='new' else WO.JobIdentityDecision.NEW)
+try:P._result_size(request,value,real_op)
+except _ValidationReject:pass
+else:raise AssertionError('forged classification accepted by common/consumer boundary')
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@workers_companion
+def test_real_find_consumer_rejects_late_invalid_candidate_and_third_row():
+    _run(
+        _REAL_FIND_SETUP
+        + """
+request=WB._find_jobs_raw(logical);valid=real_family('two')
+bad=list(valid[1]);bad[13]=b'bad-intent'
+for rows in ((valid[0],tuple(bad)),valid+(valid[1],),tuple(reversed(valid))):
+    try:WR._decode_find_raw(request,rows)
+    except _ValidationReject as error:assert type(error) is _ValidationReject
+    else:raise AssertionError('incomplete/invalid family published')
+value=WR._decode_find_raw(request,valid)
+object.__setattr__(value.candidates[1].work,'intent_evidence',b'bad-intent')
+try:P._result_size(request,value,real_op)
+except _ValidationReject:pass
+else:raise AssertionError('late invalid retained graph accepted')
 print('MANAGED_BODY_COMPLETE')
 """
     )

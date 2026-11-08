@@ -2,7 +2,14 @@
 
 import pytest
 from test_managed_lifecycle import _FIXTURE, _run
-from test_native_workers_profile import _JOB_SETUP, _LIST_SETUP, _WORKERS, workers_companion
+from test_native_workers_profile import (
+    _FIND_SETUP,
+    _JOB_SETUP,
+    _LIST_SETUP,
+    _REAL_FIND_SETUP,
+    _WORKERS,
+    workers_companion,
+)
 
 pytestmark = workers_companion
 
@@ -633,6 +640,198 @@ with m._construction(False) as issuer:
 assert m.read_result(b,execution_ledger=L)==()
 assert m.capacity_snapshot(execution_ledger=L)['D']==0
 assert m.capacity_snapshot(execution_ledger=L)['BB']==required
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+def test_find_minimum_capacity_rejected_before_native_operation():
+    # Breaks when W04 does not share the local pre-execution minimum guard.
+    _run(
+        _FIND_SETUP
+        + """
+op=finding();request=find_request()
+preparation={'profile':op,'data':request}
+required=P.result_capacity(op)
+assert m._listing_capacity_error(preparation,required-1) is E.CAPACITY_EXCEEDED
+assert m._listing_capacity_error(preparation,required) is None
+assert m._listing_capacity_error(preparation,required+1) is None
+assert m._listing_capacity_error(preparation,True) is E.CAPACITY_EXCEEDED
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+def test_find_retained_ticket_minimum_rechecks_and_stale_root_protection():
+    # Synthetic graph admission exercises the real controller without invoking
+    # the independently owned consumer builder or any native connection.
+    _run(
+        _FIXTURE
+        + _FIND_SETUP
+        + """
+original_limits=limits
+def limits(**overrides):
+    values=dict(prepare_bytes=10000000,prepare_bytes_per_execution=10000000,result_bytes=300000000,result_bytes_per_ticket=150000000)
+    values.update(overrides)
+    return original_limits(**values)
+L,x,actual,c=setup_physical();r=active_root(c,L)
+op=finding();request=find_request()
+with m._construction(False) as paid:
+    a,code=m._reserve_preparation_paid(x,P._preparation_capacity(op),L,paid)
+    assert code is None
+    assert m._set_preparation_paid(a,request,L,paid,unreturned=True,operation=op) is None
+t=m.admit(r,a,execution_ledger=L)
+required=m.result_capacity(t,execution_ledger=L)
+assert required==119667132
+before=m.capacity_snapshot(execution_ledger=L)
+expect(E.CAPACITY_EXCEEDED,lambda:m.reserve_result(t,required-1,execution_ledger=L))
+assert m.capacity_snapshot(execution_ledger=L)==before
+expect(E.INVALID_OBSERVATION,lambda:m.result_capacity(t,execution_ledger=ExecutionLedger()))
+physical=m._ticket(t,L);saved=physical.current;physical.current=None
+expect(E.INVALID_OBSERVATION,lambda:m.result_capacity(t,execution_ledger=L))
+physical.current=saved
+b=m.reserve_result(t,required,execution_ledger=L)
+m._results[b._stamp]['capacity']=required-1
+before=m.capacity_snapshot(execution_ledger=L)
+with m._construction(False) as issuer:
+    expect(E.CAPACITY_EXCEEDED,lambda:m._start_operation(t,b,L,reservation=issuer))
+    assert m._ticket(t,L).operation['state']=='ADMITTED'
+    assert not m._ticket(t,L).operation['running']
+assert m.capacity_snapshot(execution_ledger=L)==before
+assert not L.uncertainty.present and not old._domain.stopped
+m._results[b._stamp]['capacity']=required
+m.release_result(b,execution_ledger=L)
+m.release_ticket(t,execution_ledger=L)
+expect(E.INVALID_OBSERVATION,lambda:m.result_capacity(t,execution_ledger=L))
+m.release_preparation(a,execution_ledger=L)
+assert m.capacity_snapshot(execution_ledger=L)['AB']==0
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+_REAL_FIND_LIFECYCLE = (
+    _REAL_FIND_SETUP
+    + """
+original_limits=limits
+def limits(**overrides):
+    values=dict(prepare_bytes=10000000,prepare_bytes_per_execution=10000000,result_bytes=300000000,result_bytes_per_ticket=150000000,construction_slots=4)
+    values.update(overrides)
+    return original_limits(**values)
+"""
+)
+
+
+def test_real_find_paid_builder_snapshots_once_after_reservation():
+    _run(
+        _FIXTURE
+        + _REAL_FIND_LIFECYCLE
+        + """
+L,x,actual,c=setup_physical()
+class Probe(dict):
+    reads=0
+    def items(self):
+        assert m._counts['D']==1
+        assert m._counts['A']==1 and m._counts['AB']==3156870
+        self.reads+=1
+        return super().items()
+payload=Probe(value=1)
+object.__setattr__(logical.job,'payload',payload)
+saved_freeze=P.freeze_request
+calls=[]
+def checked_freeze(statement,parameters,/,*,context):
+    assert statement.key=='W04','find constructed retained W01 request'
+    calls.append(statement.key)
+    return saved_freeze(statement,parameters,context=context)
+P.freeze_request=checked_freeze
+def forbidden(*args,**kwargs):raise AssertionError('public/submit wrapper reached')
+WB._submit_raw=WB.submit=WB.find_jobs=forbidden
+a=m._prepare_component(x,real_op,logical,execution_ledger=L)
+assert payload.reads==1 and calls==['W04']
+request=m._preparations[a._stamp]['data']
+assert len(request.parameters)==7 and request.context.readiness is None
+assert len(request.context.expected)==1
+assert m._preparations[a._stamp]['profile'] is real_op
+retained=request.context.expected[0].semantic_input
+payload['value']=999
+object.__setattr__(logical.job,'work_id',str(UUID(int=99)))
+assert request.parameters[0]==UUID(int=1)
+assert request.context.expected[0].semantic_input is retained
+assert B._parse_canonical_json_raw(retained)['value']==1
+m.release_preparation(a,execution_ledger=L)
+assert m.capacity_snapshot(execution_ledger=L)['AB']==0
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+@pytest.mark.parametrize("case", ["new", "match", "inbox", "two"])
+def test_real_find_publication_borrows_existing_result_until_explicit_release(case):
+    _run(
+        _FIXTURE
+        + _REAL_FIND_LIFECYCLE
+        + f"case={case!r}\n"
+        + """
+L,x,actual,c=setup_physical();r=active_root(c,L)
+a=m._prepare_component(x,real_op,logical,execution_ledger=L)
+request=m._preparations[a._stamp]['data'];t=m.admit(r,a,execution_ledger=L)
+required=m.result_capacity(t,execution_ledger=L)
+assert required==WN.FIND_JOBS_RESULT_CAPACITY==119667132
+before=m.capacity_snapshot(execution_ledger=L)
+expect(E.CAPACITY_EXCEEDED,lambda:m.reserve_result(t,required-1,execution_ledger=L))
+assert m.capacity_snapshot(execution_ledger=L)==before
+b=m.reserve_result(t,required,execution_ledger=L)
+with m._construction(False) as issuer:
+    assert m._start_operation(t,b,L,reservation=issuer) is request
+    value=WR._decode_find_raw(request,real_family(case))
+    m.set_result(b,value,execution_ledger=L)
+    expect(E.RESOURCE_BUSY,lambda:m.read_result(b,execution_ledger=L))
+    expect(E.RESOURCE_BUSY,lambda:m.release_result(b,execution_ledger=L))
+    m._complete_operation(t,L,known=True)
+borrowed=m.read_result(b,execution_ledger=L)
+assert borrowed is value and m._results[b._stamp]['data'] is value
+assert m.capacity_snapshot(execution_ledger=L)['BB']==required
+expect(E.RESOURCE_BUSY,lambda:m.release_ticket(t,execution_ledger=L))
+expect(E.RESOURCE_BUSY,lambda:m.release_preparation(a,execution_ledger=L))
+expect(E.RESOURCE_BUSY,lambda:m.release_root(r,execution_ledger=L))
+expect(E.INVALID_OBSERVATION,lambda:m.read_result(b,execution_ledger=ExecutionLedger()))
+# read_result returns a borrowed reference, not a separately tracked lease.
+# Caller drops the borrowed graph before explicitly releasing the paid B.
+borrowed=value=None
+m.release_result(b,execution_ledger=L)
+expect(E.INVALID_OBSERVATION,lambda:m.read_result(b,execution_ledger=L))
+m.release_ticket(t,execution_ledger=L)
+expect(E.INVALID_OBSERVATION,lambda:m.result_capacity(t,execution_ledger=L))
+m.release_preparation(a,execution_ledger=L)
+assert m.capacity_snapshot(execution_ledger=L)['AB']==0
+assert m.capacity_snapshot(execution_ledger=L)['BB']==0
+print('MANAGED_BODY_COMPLETE')
+"""
+    )
+
+
+def test_real_find_invalid_late_graph_is_not_published_and_retains_held_charges():
+    _run(
+        _FIXTURE
+        + _REAL_FIND_LIFECYCLE
+        + """
+L,x,actual,c=setup_physical();r=active_root(c,L)
+a=m._prepare_component(x,real_op,logical,execution_ledger=L)
+request=m._preparations[a._stamp]['data'];t=m.admit(r,a,execution_ledger=L)
+required=m.result_capacity(t,execution_ledger=L);b=m.reserve_result(t,required,execution_ledger=L)
+with m._construction(False) as issuer:
+    m._start_operation(t,b,L,reservation=issuer)
+    value=WR._decode_find_raw(request,real_family('two'))
+    object.__setattr__(value.candidates[1].work,'intent_evidence',b'bad-intent')
+    expect(E.INVALID_OBSERVATION,lambda:m.set_result(b,value,execution_ledger=L))
+    assert not m._results[b._stamp]['populated']
+    expect(E.RESOURCE_BUSY,lambda:m.read_result(b,execution_ledger=L))
+    m._fail_operation_paid(t,L,issuer,stopped=True)
+assert m._ticket(t,L).operation['state']=='HELD'
+assert m._ticket(t,L).roots[t._subject]['state']=='UNKNOWN'
+assert m.capacity_snapshot(execution_ledger=L)['AB']==3156870
+assert m.capacity_snapshot(execution_ledger=L)['BB']==required
+expect(E.RESOURCE_BUSY,lambda:m.release_result(b,execution_ledger=L),True)
 print('MANAGED_BODY_COMPLETE')
 """
     )

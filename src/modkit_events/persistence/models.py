@@ -325,6 +325,9 @@ def _validate_admission_input_core(self, *, _reject=None, _intent=True):
             _bytes_raw as _bytes,
         )
         from .bindings import (
+            _canonical_event_raw as canonical_event,
+        )
+        from .bindings import (
             _canonical_intent_raw as canonical_intent,
         )
         from .bindings import (
@@ -341,6 +344,9 @@ def _validate_admission_input_core(self, *, _reject=None, _intent=True):
         )
         from .bindings import (
             _integer_raw as _integer,
+        )
+        from .bindings import (
+            _validate_event_replay_raw as validate_event_replay,
         )
         from .bindings import (
             _version_to_decimal_raw as version_to_decimal,
@@ -367,8 +373,6 @@ def _validate_admission_input_core(self, *, _reject=None, _intent=True):
     if self.identity.kind is WorkKind.JOB:
         expected = canonical_json(decode_mapping_replay(self.replay_input))
     else:
-        if _reject is not None:
-            _reject_scalar(_reject)
         event = validate_event_replay(self.replay_input)
         if (
             event.schema_version != self.schema_version

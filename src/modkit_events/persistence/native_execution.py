@@ -1,4 +1,4 @@
-"""Optional fixed E14/E28 and W01/W02/W03 issuer on the original caller-owned managed root.
+"""Optional fixed E14/E28 and W01/W02/W03/W04 issuer on the original caller-owned managed root.
 
 Cooperative fresh/unpooled psycopg 3.3.8, libpq 180006 profile. No nested/raw
 transaction bypass, global/custom adapter changes, concurrent direct connection
