@@ -200,13 +200,13 @@ cross-broker/database transaction and no implicit lease-renewal service.
 
 ## Native PostgreSQL transport status
 
-**Bounded W01/W02 native regression passed; full native qualification incomplete
-(NOT_READY).** The W01 submission and W02 status extension has passed independent
-source review and focused source validation. It uses the existing Events
+**Bounded W01/W02, helper and W05 dependency checks passed; full native
+qualification remains incomplete (NOT_READY).** The W01 submission and W02 status
+extension has passed independent source review and focused source validation. It uses the existing Events
 controller and the caller's original READ COMMITTED root, with fixed statement
 profiles, bounded request/context retention, and fully validated typed results.
 It adds no second controller or Events dependency on Workers. This does not
-qualify W03-W05 or a generic native transport.
+qualify W03-W05 native profiles or a generic native transport.
 
 Workers selects the extension through its `prepare_submit` and `prepare_read_job`
 wrappers. Admission, result reservation, execution and release remain explicit.
@@ -232,13 +232,26 @@ for this invocation and profile; it is not a latency, throughput or memory
 guarantee. Closing a held conflict connection is not a managed cleanup/refund
 receipt.
 
-The continuation then stopped at a fixture observation-permission error. Full
-W05 rollback/negative proof, the shared-helper semantic corpus, server-log privacy
-and final fixture aftermath remain incomplete. This later observation failure
-does not invalidate the completed W01/W02 phases or establish another product
-defect. Existing E14/E28 qualification remains separate. Installation, final
-grants/manifests, broader native qualification and release readiness remain
-unqualified.
+That continuation later stopped at a fixture observation-permission error.
+This attempt and an earlier incorrect integer-oracle attempt remain historical
+failures; completed native phases were preserved without replay.
+
+A separately reviewed continuation passed the corrected 43-case helper corpus
+and the targeted current-helper W05 SQL dependency checks. W05 passed exact
+named-value and claim/history comparisons, both full transactional rollback
+checks, and the expected late-corrupt-replay error with evidence of the earlier
+real claim allocation. This is not W05 native binary-profile or broad
+concurrency qualification.
+
+Final observations matched the expected committed baseline, with no prepared
+transactions or other database clients. The bounded 250-line server-log privacy
+check, containment and input-pin checks passed. These checks do not certify all
+logs. A separate disposition receipt confirms clean shutdown and non-force
+removal of the isolated fixture, with container and owned socket absence verified.
+
+Existing E14/E28 qualification remains separate. Installation, final
+grants/manifests, installed artifacts, other drivers/platforms, broader native
+and scaling qualification, and release readiness remain unqualified.
 
 Companion source checks require `MODKIT_EVENTS_WORKERS_TESTS=1` and an installed
 Workers package or an explicit Workers source `PYTHONPATH`. Unselected companion

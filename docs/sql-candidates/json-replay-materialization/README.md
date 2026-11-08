@@ -1,6 +1,6 @@
 # Bounded JSON replay materialization
 
-Status: source-reviewed fix with the original bounded W01/W02 native regression independently accepted. Full shared-helper, W05 and release qualification remain incomplete (NOT_READY).
+Status: source-reviewed fix with independently accepted bounded W01/W02 native regression, 43-case helper corpus, targeted current-helper W05 SQL dependency and final observation checks. Full native and release qualification remain incomplete (NOT_READY). The isolated fixture was subsequently shut down and removed.
 
 ## Cause and change
 
@@ -18,17 +18,27 @@ The new source guards first failed against the unchanged SQL because the outer m
 
 The full suite stopped during collection because the existing optional Pydantic dependency is absent. The established available-source selection, excluding only tests/test_contracts_pydantic.py, passed 764 tests and 293 subtests, with 97 optional skips. The five existing Workers W05 source-contract tests passed. Ruff and git diff --check passed. No dependency was installed.
 
-Existing independent semantic requirements cover escaped NUL, strict UTF-8 and surrogate handling, decoded duplicate keys, byte-key ordering, integer versus float, signed zero, malformed/trailing input and size/depth/node/collection limits. Complete SQL checks against those expected outcomes on flat and stored bytes, including chunk edges 4095/4096/4097 and late malformed input, remain incomplete. Source and Python oracle checks do not certify that runtime corpus.
+The independent SQL semantic results are recorded below. Source guards and Python oracle checks remain separate evidence and do not by themselves certify PostgreSQL behavior.
 
 ## Bounded native regression result
 
 The original failed joint W01/W02 attempt remains a historical failure. At the exact changed SQL snapshot, a fresh independently reviewed invocation of the unchanged native test passed its normal, key-conflict and ID-conflict phases. The test retained the 256 KiB payload string, 20-second statement timeout and one-CPU limit, using PostgreSQL 18.1, psycopg 3.3.8 and libpq 180006.
 
-The normal phase passed initial submission, protected full and missing reads, identical duplicate submission, caller rollback and commit, independent visibility checks, tested result lifetimes and capacity assertions. Both conflict phases passed their exception, held/uncertain-state and committed-baseline assertions. Closing a held conflict connection is not a managed cleanup/refund receipt. All three phases passed bounded client diagnostic checks; this does not include server-log privacy.
+The normal phase passed initial submission, protected full and missing reads, identical duplicate submission, caller rollback and commit, independent visibility checks, tested result lifetimes and capacity assertions. Both conflict phases passed their exception, held/uncertain-state and committed-baseline assertions. Closing a held conflict connection is not a managed cleanup/refund receipt. All three phases passed bounded client diagnostic checks. The separately completed server-log check is scoped below.
 
 The elapsed times were 7.923 seconds for the complete normal subprocess and about 2.026 seconds for each complete conflict subprocess. They are not individual query timings or performance guarantees. This acceptance closes the observed original timeout regression for this invocation and profile, without establishing all drivers, platforms, payloads, concurrency or memory behavior.
 
-The combined continuation stopped later at a fixture observation-permission error. Full W05 rollback/negative proof, the shared-helper semantic corpus, server-log privacy and final fixture aftermath remain incomplete. The completed native phases remain valid; the later observation error is not evidence of another product defect. Migration/grants, installed artifacts, broader controller coverage and release readiness remain unqualified.
+That combined continuation stopped later at a fixture observation-permission error and remains a failed attempt. The original timeout and earlier incorrect 8192-digit integer-oracle attempt also remain historical failures. Their records were not relabeled; the completed native phases were preserved without replay. A separately reviewed continuation completed the bounded checks below.
+
+## Bounded helper and final observation results
+
+All 43 corrected helper cases matched independent expected canonical bytes or NULL outcomes through direct and stored-row routes. Coverage includes escaped NUL, UTF-8/escape/surrogate rules, decoded duplicate keys and ordering, integer/float distinctions and signed zero, finite float extrema/underflow, chunk edges 4095/4096/4097, late invalid input, grammar/trailing/empty/NULL failures, depth 32/33, collection sizes 65536/65537 and independent raw/canonical 1 MiB boundaries. Integer checks accept 4096 digits and reject 4097, 8192 and 8193 digits. A small node-budget guard passed; the outer 262144-node boundary was not reached because the canonical framing limit dominates valid outputs.
+
+For identical 262155-byte input with an independent 262178-byte canonical expectation, flat input took 596.426 ms and stored input took 572.056 ms under the unchanged 20-second statement timeout and one-CPU limit. The stored datum was observed at 3021 physical bytes with pglz compression; compression was not established for every corpus row. These one-shot measurements support removal of the demonstrated representation amplification, not statistical speedup, throughput, allocation, RSS or SLA guarantees. Temporary-table rollback and absence checks passed.
+
+The final observer found the expected committed baseline: one Work, payload, history and business row, with no prepared transactions or other database clients. This compact observation is not a full database checksum. The bounded 250-line server-log capture contained neither synthetic payload nor material sentinel; actual outputs stayed below the capture limits. It does not certify all possible logs. Final containment and all 119 input-pin checks passed. A separate disposition receipt confirms clean shutdown and non-force removal of the isolated fixture, with the exact container and owned socket absent and qualification evidence preserved.
+
+Migration/grants, installed artifacts, other drivers/platforms, broader controller/concurrency/scaling coverage and release readiness remain unqualified.
 
 ## Dependency provenance
 
@@ -36,10 +46,12 @@ Before this change, the complete SQL was 365263 bytes with SHA256 482a0776b9917b
 
 This edit changes the older W05-qualified prefix. Preserve historical W05 evidence against Events 60eac7ac7311c7e45bbccbcea2a22a1de8f7ad7e and its 321406-byte SQL prefix, SHA256 0800ed51a5588e9f2d44aa4edb87a4ce262a775b330bd229d8576f0e48292228. It cannot silently certify this new helper snapshot.
 
-W05 calls E04, which validates through E15, _intent_valid and _json_to_j. Current dependency acceptance needs an explicit decision and independent review of the changed helper plus unchanged ABI/locking/capture bodies. New-snapshot runtime checks must cover valid acquisition and corrupt selected replay rejection, including later-row failure rolling back earlier claims/history. Those complete acceptance criteria remain open; the bounded W01/W02 result does not close them. E10 remains separately gated.
+W05 calls E04, which validates through E15, _intent_valid and _json_to_j. Independent common and consumer reviews now accept the targeted changed-helper dependency at this exact snapshot. Valid acquisition matched all 75 named SQL values and the exact claim/history delta. Both valid and later-corrupt-replay roots passed complete 13-table rollback comparisons. Sequence transitions 3 to 4 and then 4 to 5 prove actual claim allocations, including the earlier real claim before the later malformed row failed; sequence increments persist across rollback. The received PZ012 neutral-composition error passed exact checks before missing-subtype validation.
+
+This closes only the targeted current-helper SQL dependency. The negative row was naked Work, not a complete malformed family or a post-E04 material fault. Named SQL values do not qualify binary column order, the W05 native decoder/profile, broad concurrency or fairness. Historical prefix evidence remains historical; unchanged ABI/locking/capture reasoning is carried forward only through the exact function map. E10 remains separately gated.
 
 ## Evidence
 
-Retained review artifacts include the source diagnosis, independent causal-diagnostic review, RED/GREEN logs, complete function maps and exact candidate hashes. The accepted bounded native result is recorded in review-native-result-v1.md, SHA256 c85a9c20e4c0a262cb411c0f1d035c449de4977337481df4252099710bfbf3f4. Historical failed-attempt evidence is preserved separately.
+Retained review artifacts include the source diagnosis, independent causal-diagnostic review, RED/GREEN logs, complete function maps and exact candidate hashes. The accepted bounded native result is recorded in review-native-result-v1.md, SHA256 c85a9c20e4c0a262cb411c0f1d035c449de4977337481df4252099710bfbf3f4. Consolidated bounded acceptance is recorded in review-consolidated-results-v1.md, SHA256 3eba9215a5fb5c0b3da44e45e1f7f13d6e415890a6946f2d27ac5b5b9eedfb6f. Consumer acceptance is recorded in w05-current-dependency-result-acceptance-v1.md, SHA256 059a20486f8bf07599386e1f46b19da7b4fa95e5e82ee89a874cddf20127e06f. Historical failed-attempt evidence is preserved separately.
 
 PostgreSQL reference implementations: [bytea access and substring](https://github.com/postgres/postgres/blob/REL_18_1/src/backend/utils/adt/varlena.c), [detoasting and slice allocation](https://github.com/postgres/postgres/blob/REL_18_1/src/backend/access/common/detoast.c).
