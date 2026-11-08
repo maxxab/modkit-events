@@ -15,6 +15,7 @@
 - **sql:** persist fenced publication intent (`4fcbb669b9d1`)
 - **persistence:** add pure native transport codecs (`16f06eef08ae`)
 - **sql:** settle fenced publication outcomes (`7bdd66d12ea9`)
+- **events:** retain typed statement backing in canonical lifecycle (`4f5a1bf092ba`)
 
 ### Bug Fixes
 
