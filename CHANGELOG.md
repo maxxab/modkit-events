@@ -22,6 +22,7 @@
 - **persistence:** add source-only Workers native transport (`3d0b10d1b602`)
 - **publication:** add bounded per-item batch outcomes (`c593371b39fb`)
 - **persistence:** support bounded native job listing (`e28ec011a04b`)
+- **persistence:** add cooperative work cancellation (`55f88ddd6e61`)
 
 ### Bug Fixes
 
