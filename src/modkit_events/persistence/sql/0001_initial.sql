@@ -5106,3 +5106,73 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e21(pg_catalog.uuid,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4) FROM PUBLIC;
+
+-- E29 retained publication history. Bounded structural observation, not delivery proof.
+CREATE FUNCTION modkit_events.e29(
+    p_event_id pg_catalog.bytea,p_after_id pg_catalog.int8,p_limit pg_catalog.int4)
+RETURNS TABLE(
+    history_id pg_catalog.int8,event_id pg_catalog.bytea,intent_id pg_catalog.uuid,
+    operation_id pg_catalog.uuid,status pg_catalog.text,receipt pg_catalog.bytea,
+    evidence pg_catalog.bytea,binding pg_catalog.bytea,recorded_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    stored modkit_events.publication_history%ROWTYPE;
+    identity_conflict pg_catalog.bool := FALSE;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF modkit_events._utf8_valid(p_event_id,256,TRUE) IS NOT TRUE
+       OR p_after_id IS NULL OR p_after_id<0
+       OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid publication history arguments';
+    END IF;
+    -- Digest discovers aliases; full IDs must not filter them out.
+    FOR stored IN
+        SELECT listed.* FROM modkit_events.publication_history AS listed
+         WHERE listed.event_digest=pg_catalog.sha256(p_event_id) AND listed.history_id>p_after_id
+         ORDER BY listed.history_id LIMIT p_limit
+    LOOP
+        IF stored.history_id IS NULL OR stored.history_id<=0
+           OR modkit_events._utf8_valid(stored.event_id,256,TRUE) IS NOT TRUE
+           OR stored.event_digest IS DISTINCT FROM pg_catalog.sha256(stored.event_id)
+           OR stored.event_digest IS DISTINCT FROM pg_catalog.sha256(p_event_id)
+           OR (stored.receipt IS NOT NULL AND pg_catalog.octet_length(stored.receipt)>4096)
+           OR stored.evidence IS NULL OR pg_catalog.octet_length(stored.evidence)>1048576
+           OR stored.binding IS NULL OR pg_catalog.octet_length(stored.binding)>1048576
+           OR modkit_events._instant_bytes(stored.recorded_at) IS NULL
+           OR ((
+               (stored.status COLLATE pg_catalog."C" IN ('enqueue','claim_publication','recover_publication_preintent')
+                   AND stored.intent_id IS NULL AND stored.operation_id IS NULL AND stored.receipt IS NULL)
+               OR (stored.status COLLATE pg_catalog."C"='renew_publication'
+                   AND stored.operation_id IS NULL AND stored.receipt IS NULL)
+               OR (stored.status COLLATE pg_catalog."C" IN ('publication_intent','recover_publication_intent')
+                   AND stored.intent_id IS NOT NULL AND stored.operation_id IS NULL AND stored.receipt IS NULL)
+               OR (stored.status COLLATE pg_catalog."C" IN ('publication_confirmed','publication_rejected','publication_uncertain')
+                   AND stored.intent_id IS NOT NULL AND stored.operation_id IS NULL)
+               OR (stored.status COLLATE pg_catalog."C" IN ('repair_published','repair_rejected')
+                   AND stored.intent_id IS NOT NULL AND stored.operation_id IS NOT NULL)
+           ) IS NOT TRUE)
+           OR (stored.status COLLATE pg_catalog."C" NOT IN ('repair_published','repair_rejected')
+               AND stored.binding<>''::pg_catalog.bytea)
+           OR (stored.status COLLATE pg_catalog."C" NOT IN
+               ('publication_confirmed','publication_rejected','publication_uncertain','repair_published','repair_rejected')
+               AND stored.evidence<>''::pg_catalog.bytea) THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication history record';
+        END IF;
+        IF stored.event_id IS DISTINCT FROM p_event_id THEN
+            identity_conflict := TRUE;
+        END IF;
+        RETURN QUERY SELECT stored.history_id,stored.event_id,stored.intent_id,stored.operation_id,
+            stored.status,stored.receipt,stored.evidence,stored.binding,stored.recorded_at;
+    END LOOP;
+    -- Check the whole selected page before reporting an otherwise coherent alias.
+    -- Raising aborts this invocation; no successful partial result is exposed.
+    IF identity_conflict THEN
+        RAISE EXCEPTION USING ERRCODE='PZ002',MESSAGE='publication history event identity conflict';
+    END IF;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e29(pg_catalog.bytea,pg_catalog.int8,pg_catalog.int4) FROM PUBLIC;
