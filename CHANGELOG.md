@@ -4,25 +4,37 @@
 
 ### Features
 
-- implement generic event messaging ([cdf138deb1f8](https://github.com/maxxab/modkit-events/commit/cdf138deb1f84f3e8b4cdb2fc17e1e7f1a974875))
-- **contracts:** add explicit event and subscription contracts ([59b922a36864](https://github.com/maxxab/modkit-events/commit/59b922a36864f5e23bfed4cd1f687d9b9f611dda))
+- implement generic event messaging (`cdf138deb1f8`)
+- **contracts:** add explicit event and subscription contracts (`59b922a36864`)
+- **sql:** prepare bounded work listing candidate (`8e9cf5384149`)
+
+### Bug Fixes
+
+- keep Events tests independent of Workers (`222619b39fad`)
+- preserve metadata in installed Events test staging (`e5165c2de6be`)
+
+### Documentation
+
+- clarify one-way Events and Workers dependency (`956f1d74e24e`)
 
 ### Testing
 
-- separate Redis claim exclusivity from lease expiry ([4d8bd2531165](https://github.com/maxxab/modkit-events/commit/4d8bd253116557ae0a41dd3717a2b2d56c67bee1))
+- separate Redis claim exclusivity from lease expiry (`4d8bd2531165`)
 
 ### Build System
 
-- add portable development standards tooling ([90afb2915c3e](https://github.com/maxxab/modkit-events/commit/90afb2915c3e697ca70683f619fc47cd322b1094))
-- verify immutable release artifacts ([b1624505d2b7](https://github.com/maxxab/modkit-events/commit/b1624505d2b7184376e98e0b9553fa6c30282361))
+- add portable development standards tooling (`90afb2915c3e`)
+- verify immutable release artifacts (`b1624505d2b7`)
 
 ### CI/CD
 
-- verify package and Redis integration across supported runtimes ([f59bea38aae8](https://github.com/maxxab/modkit-events/commit/f59bea38aae8082d9038fd35196e953fad46c577))
-- pin current v7 checkout and Python setup actions ([d98a979f3f22](https://github.com/maxxab/modkit-events/commit/d98a979f3f228ce9c1cdf82bb9021e6b96fc5fdd))
-- publish tested releases with trusted identity ([d0cbd54c5c9b](https://github.com/maxxab/modkit-events/commit/d0cbd54c5c9b04df96c420ecae9c71cc4ed8e521))
+- verify package and Redis integration across supported runtimes (`f59bea38aae8`)
+- pin current v7 checkout and Python setup actions (`d98a979f3f22`)
+- publish tested releases with trusted identity (`d0cbd54c5c9b`)
 
 ### Maintenance
 
-- ignore local build and environment files ([c820ab5a6097](https://github.com/maxxab/modkit-events/commit/c820ab5a6097c0bbb738b05df09ac23742d4d346))
-- keep duplicate generated workflow local ([fe1779f1c761](https://github.com/maxxab/modkit-events/commit/fe1779f1c76131fb6851fd7769e0188ac3de6a75))
+- ignore local build and environment files (`c820ab5a6097`)
+- keep duplicate generated workflow local (`fe1779f1c761`)
+- import unqualified Events persistence baseline (`86244add88b9`)
+- import unqualified Events release policy baseline (`432a8e7635a8`)
