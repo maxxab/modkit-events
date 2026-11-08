@@ -1,0 +1,14 @@
+# E23 publication renewal
+
+E23 renews a live exact publication fence in claimed or publishing state. It retains token, ownership revision (including int8max), state and intent. The lease is the later of its existing value and the final database time plus exact ceiling-microsecond binary64 duration. Expired ownership is rejected; E26 remains responsible for recovery.
+
+A blocking digest row mutex precedes a fresh raw fence/state snapshot and one E28 integrity observation. The retained complete postimage differs only in lease_until and updated_at. One renew_publication history preserves the optional current intent; the caller owns transaction outcome. No new helper framework, schema, dependency or production grant is introduced.
+
+## Verification
+Source tests cover ABI, privilege/search-path declarations, invalid-input ordering, blocking digest lock/fresh fence, E28 reuse, exact E05/E22 quantization, retained postimage and history. Source tests: 10 RED failures, then 10 GREEN passes; focused 147 tests and 249 subtests passed before fixture preparation. Independent exact source, fixture and runner review closed direct/indirect no-E10 paths before runtime. Available base lane: 249 passed, 30 optional skips, 271 subtests, with the known unavailable optional Pydantic module excluded. Final formatted source/artifact checks: 47 passed, 250 subtests; focused lint and formatting passed.
+
+The bounded fixture covers public E02/E22/E23 using valid U+0000, both eligible states, max-int8 revision and zero UUID token, five lease vectors with max(old,new) semantics, retained receipt/evidence, full postimage/history, invalid argument and stale/expired fence rejection footprints, semantic preimage corruption, and owner-injected invalid state. Tiny durations test retention, not an observable one-microsecond extension. Coherent SHA collisions are source-only and production hashes are never mocked.
+
+Fresh offline PostgreSQL 18.1 passed on its first attempt in 1.30 seconds, with the reviewed fixture plus default EXECUTE/private-table denial, explicit test-role E23 execution and REPEATABLE READ rejection precedence. Both fixture transactions rolled back; independent result review accepted raw exit 0, empty stderr and 0|0|0|0 schema/role/prepared-transaction/other-client aftermath. The exact disposable target was cleanly stopped: pg_ctl waiter 137 was reconciled against actual exit 0, nonrunning state and no OOM and clean shutdown, without retry. After independent stopped-state acceptance and a fresh exact-ID nonrunning check, only that new target was removed; exact ID and name absence checks passed. Its runner and attempt marker are consumed and must not be replayed.
+
+No concurrent schedules, runtime exact-expiry-equality assertion, physical IO, native driver, E10, full publication lifecycle or complete migration/package qualification is claimed. Manifest/grants/readiness stay unchanged. Package remains NOT_READY.

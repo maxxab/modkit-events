@@ -5387,3 +5387,146 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e22(pg_catalog.int4,pg_catalog.float8,pg_catalog.bytea,pg_catalog.int4) FROM PUBLIC;
+
+-- E23: live exact publication renewal; E26 retains expired-lease recovery.
+CREATE FUNCTION modkit_events.e23(
+    p_event_id pg_catalog.bytea,p_token pg_catalog.uuid,
+    p_ownership_revision pg_catalog.int8,p_lease_seconds pg_catalog.float8
+)
+RETURNS TABLE(lease_until pg_catalog.timestamptz)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    captured pg_catalog.record;
+    locked_outbox modkit_events.outbox%ROWTYPE;
+    fresh_outbox modkit_events.outbox%ROWTYPE;
+    expected_outbox modkit_events.outbox%ROWTYPE;
+    updated_outbox modkit_events.outbox%ROWTYPE;
+    final_time pg_catalog.timestamptz;
+    candidate_lease pg_catalog.timestamptz;
+    affected pg_catalog.int8;
+    history_id_value pg_catalog.int8;
+    lease_wire pg_catalog.bytea;
+    exponent_bits pg_catalog.int4;
+    significand pg_catalog.int8;
+    numerator pg_catalog.numeric;
+    denominator pg_catalog.numeric;
+    byte_index pg_catalog.int4;
+    bit_index pg_catalog.int4;
+    lease_us pg_catalog.int8;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF modkit_events._utf8_valid(p_event_id,256,TRUE) IS NOT TRUE
+       OR p_token IS NULL OR p_ownership_revision IS NULL OR p_ownership_revision<=0
+       OR (p_lease_seconds>0::pg_catalog.float8 AND p_lease_seconds<=3600::pg_catalog.float8) IS NOT TRUE THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid publication renewal arguments';
+    END IF;
+
+    -- Exact ceil of the represented positive binary64 duration, not float multiplication.
+    lease_wire := pg_catalog.float8send(p_lease_seconds);
+    IF pg_catalog.octet_length(lease_wire)<>8 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='unexpected float8 representation';
+    END IF;
+    exponent_bits := ((pg_catalog.get_byte(lease_wire,0)&127)<<4)|(pg_catalog.get_byte(lease_wire,1)>>4);
+    IF exponent_bits <= 1002 THEN
+        lease_us := 1;
+    ELSE
+        significand := (pg_catalog.get_byte(lease_wire,1)&15)::pg_catalog.int8;
+        FOR byte_index IN 2..7 LOOP
+            significand := significand*256+pg_catalog.get_byte(lease_wire,byte_index);
+        END LOOP;
+        significand := significand+4503599627370496;
+        numerator := significand::pg_catalog.numeric * 1000000::pg_catalog.numeric;
+        denominator := 1::pg_catalog.numeric;
+        FOR bit_index IN 1..(1075-exponent_bits) LOOP
+            denominator := denominator*2;
+        END LOOP;
+        lease_us := pg_catalog.div(numerator+denominator-1,denominator)::pg_catalog.int8;
+    END IF;
+    IF lease_us IS NULL OR lease_us<1 OR lease_us>3600000000 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid quantized lease';
+    END IF;
+
+    -- Digest discovery does not hide a different-full-ID alias from E28.
+    PERFORM stored.event_digest FROM modkit_events.outbox AS stored
+        WHERE stored.event_digest=pg_catalog.sha256(p_event_id) FOR NO KEY UPDATE OF stored;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale publication fence';
+    END IF;
+    -- New command snapshot after a potentially blocking lock acquisition.
+    SELECT stored.* INTO locked_outbox FROM modkit_events.outbox AS stored
+        WHERE stored.event_digest=pg_catalog.sha256(p_event_id);
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale publication fence';
+    END IF;
+    IF locked_outbox.token IS DISTINCT FROM p_token
+       OR locked_outbox.ownership_revision IS DISTINCT FROM p_ownership_revision THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale publication fence';
+    END IF;
+    IF (locked_outbox.state COLLATE pg_catalog."C" IN ('claimed','publishing')) IS NOT TRUE THEN
+        RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='invalid publication state';
+    END IF;
+
+    -- One complete preimage validator under the mutex, before any write.
+    WITH checked AS MATERIALIZED (
+        SELECT observed.* FROM modkit_events.e28(p_event_id) AS observed
+    )
+    SELECT (SELECT pg_catalog.count(*) FROM checked) AS selected_count,
+           stored AS current_outbox,observed.event_id AS checked_event_id
+      INTO captured
+      FROM modkit_events.outbox AS stored
+      LEFT JOIN checked AS observed ON TRUE
+      WHERE stored.event_digest=locked_outbox.event_digest;
+    IF NOT FOUND OR captured.selected_count IS DISTINCT FROM 1
+       OR captured.checked_event_id IS DISTINCT FROM p_event_id THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing full publication observation';
+    END IF;
+    fresh_outbox := captured.current_outbox;
+    IF fresh_outbox IS DISTINCT FROM locked_outbox
+       OR pg_catalog.convert_to(fresh_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(locked_outbox.state,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication changed under held lock';
+    END IF;
+    locked_outbox := fresh_outbox;
+    final_time := pg_catalog.clock_timestamp();
+    IF modkit_events._instant_bytes(final_time) IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid final database time';
+    END IF;
+    IF final_time>=locked_outbox.lease_until THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='publication lease expired';
+    END IF;
+    candidate_lease := final_time+(INTERVAL '1 microsecond' * lease_us::pg_catalog.float8);
+    IF modkit_events._instant_bytes(candidate_lease) IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='lease timestamp outside supported domain';
+    END IF;
+    IF candidate_lease<locked_outbox.lease_until THEN
+        candidate_lease := locked_outbox.lease_until;
+    END IF;
+    IF candidate_lease<=final_time OR modkit_events._instant_bytes(candidate_lease) IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid renewed publication lease';
+    END IF;
+    expected_outbox := locked_outbox;
+    expected_outbox.lease_until := candidate_lease;
+    expected_outbox.updated_at := final_time;
+    UPDATE modkit_events.outbox AS stored SET lease_until=candidate_lease,updated_at=final_time
+        WHERE stored.event_digest=locked_outbox.event_digest
+        RETURNING stored.* INTO updated_outbox;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 OR updated_outbox IS DISTINCT FROM expected_outbox
+       OR pg_catalog.convert_to(updated_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_outbox.state,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication update postimage mismatch';
+    END IF;
+    INSERT INTO modkit_events.publication_history AS stored
+        (event_id,intent_id,operation_id,status,receipt,evidence,binding,recorded_at)
+        VALUES(updated_outbox.event_id,updated_outbox.intent_id,NULL,
+            'renew_publication',NULL,''::pg_catalog.bytea,''::pg_catalog.bytea,final_time)
+        RETURNING stored.history_id INTO history_id_value;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 OR history_id_value IS NULL OR history_id_value<=0 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication history receipt';
+    END IF;
+    RETURN QUERY SELECT updated_outbox.lease_until;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e23(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.float8) FROM PUBLIC;

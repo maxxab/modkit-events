@@ -126,6 +126,7 @@ tests/test_work_listing_sql.py
 tests/test_audit_readers_sql.py
 tests/test_publication_history_sql.py
 tests/test_publication_claim_sql.py
+tests/test_publication_renewal_sql.py
 scripts/artifact_policy.py
 pyproject.toml
 README.md
