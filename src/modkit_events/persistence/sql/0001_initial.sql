@@ -5965,3 +5965,212 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e26(pg_catalog.int4,pg_catalog.bytea,pg_catalog.int4) FROM PUBLIC;
+
+-- E27: immutable publication reconciliation. A repeat never repeats external I/O.
+CREATE FUNCTION modkit_events.e27(
+    p_event_id pg_catalog.bytea,p_expected_revision pg_catalog.int8,
+    p_operation_id pg_catalog.uuid,p_status pg_catalog.text,
+    p_receipt pg_catalog.bytea,p_evidence pg_catalog.bytea,p_binding pg_catalog.bytea
+)
+RETURNS TABLE(
+    operation_id pg_catalog.uuid,event_id pg_catalog.bytea,expected_revision pg_catalog.int8,
+    status pg_catalog.text,receipt pg_catalog.bytea,evidence pg_catalog.bytea,binding pg_catalog.bytea,
+    resulting_revision pg_catalog.int8,recorded_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    captured pg_catalog.record;
+    locked_outbox modkit_events.outbox%ROWTYPE;
+    fresh_outbox modkit_events.outbox%ROWTYPE;
+    expected_outbox modkit_events.outbox%ROWTYPE;
+    updated_outbox modkit_events.outbox%ROWTYPE;
+    operation_row modkit_events.mutation_operations%ROWTYPE;
+    expected_operation modkit_events.mutation_operations%ROWTYPE;
+    history_row modkit_events.publication_history%ROWTYPE;
+    created_operation pg_catalog.bool:=FALSE;
+    next_revision pg_catalog.int8;
+    final_time pg_catalog.timestamptz;
+    history_status pg_catalog.text;
+    affected pg_catalog.int8;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF modkit_events._utf8_valid(p_event_id,256,TRUE) IS NOT TRUE
+       OR p_expected_revision IS NULL OR p_expected_revision<0
+       OR p_operation_id IS NULL
+       OR (p_status COLLATE pg_catalog."C" IN ('published','rejected')) IS NOT TRUE
+       OR (p_receipt IS NOT NULL AND pg_catalog.octet_length(p_receipt)>4096)
+       OR p_evidence IS NULL OR pg_catalog.octet_length(p_evidence)>1048576
+       OR p_binding IS NULL OR pg_catalog.octet_length(p_binding)>1048576 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid publication repair arguments';
+    END IF;
+
+    PERFORM stored.event_digest FROM modkit_events.outbox AS stored
+        WHERE stored.event_digest=pg_catalog.sha256(p_event_id) FOR NO KEY UPDATE OF stored;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='missing publication repair target';
+    END IF;
+    -- Fresh command snapshot after the potentially blocking outbox mutex.
+    SELECT stored.* INTO locked_outbox FROM modkit_events.outbox AS stored
+        WHERE stored.event_digest=pg_catalog.sha256(p_event_id);
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='missing publication repair target';
+    END IF;
+    WITH checked AS MATERIALIZED (
+        SELECT observed.* FROM modkit_events.e28(p_event_id) AS observed
+    )
+    SELECT (SELECT pg_catalog.count(*) FROM checked) AS selected_count,
+           stored AS current_outbox,observed.event_id AS checked_event_id
+      INTO captured
+      FROM modkit_events.outbox AS stored
+      LEFT JOIN checked AS observed ON TRUE
+      WHERE stored.event_digest=locked_outbox.event_digest;
+    IF NOT FOUND OR captured.selected_count IS DISTINCT FROM 1
+       OR captured.checked_event_id IS DISTINCT FROM p_event_id THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing full publication observation';
+    END IF;
+    fresh_outbox := captured.current_outbox;
+    IF fresh_outbox IS DISTINCT FROM locked_outbox
+       OR pg_catalog.convert_to(fresh_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(locked_outbox.state,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication changed under held lock';
+    END IF;
+    locked_outbox := fresh_outbox;
+
+    -- Original operation authority precedes current revision/state eligibility.
+    SELECT stored.* INTO operation_row FROM modkit_events.mutation_operations AS stored
+        WHERE stored.operation_id=p_operation_id;
+    IF NOT FOUND THEN
+        IF locked_outbox.ownership_revision IS DISTINCT FROM p_expected_revision THEN
+            RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale publication revision';
+        END IF;
+        IF (locked_outbox.state COLLATE pg_catalog."C"='held') IS NOT TRUE THEN
+            RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='invalid publication repair state';
+        END IF;
+        IF locked_outbox.ownership_revision=9223372036854775807::pg_catalog.int8 THEN
+            RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='ownership revision exhausted';
+        END IF;
+        next_revision := locked_outbox.ownership_revision+1;
+        final_time := pg_catalog.clock_timestamp();
+        IF modkit_events._instant_bytes(final_time) IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid final database time';
+        END IF;
+
+        expected_operation.operation_id := p_operation_id;
+        expected_operation.operation_kind := 'repair_publication';
+        expected_operation.event_id := p_event_id;
+        expected_operation.event_digest := locked_outbox.event_digest;
+        expected_operation.expected_revision := p_expected_revision;
+        expected_operation.requested_outcome := p_status;
+        expected_operation.requested_receipt := p_receipt;
+        expected_operation.evidence := p_evidence;
+        expected_operation.binding := p_binding;
+        expected_operation.resulting_revision := next_revision;
+        expected_operation.recorded_at := final_time;
+        -- The global UUID can race on another outbox row. Only its insertion
+        -- winner changes publication state; the loser reads fresh stored bytes.
+        INSERT INTO modkit_events.mutation_operations AS stored
+            (operation_id,operation_kind,event_id,expected_revision,requested_outcome,
+             requested_receipt,evidence,binding,resulting_revision,recorded_at)
+            VALUES(p_operation_id,'repair_publication',p_event_id,p_expected_revision,p_status,
+                p_receipt,p_evidence,p_binding,next_revision,final_time)
+            ON CONFLICT ON CONSTRAINT mutation_operations_pkey DO NOTHING
+            RETURNING stored.* INTO operation_row;
+        GET DIAGNOSTICS affected=ROW_COUNT;
+        IF affected NOT IN (0,1) THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication operation insertion';
+        END IF;
+        created_operation := affected=1;
+        IF NOT created_operation THEN
+            SELECT stored.* INTO operation_row FROM modkit_events.mutation_operations AS stored
+                WHERE stored.operation_id=p_operation_id;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing conflicting publication operation';
+            END IF;
+        END IF;
+    END IF;
+
+    IF (operation_row.operation_kind COLLATE pg_catalog."C" IN
+        ('repair_publication','reconcile_work','hold_uncertain')) IS NOT TRUE THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication operation kind';
+    END IF;
+    IF pg_catalog.convert_to(operation_row.operation_kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to('repair_publication','UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ002',MESSAGE='publication repair operation kind conflict';
+    END IF;
+    IF operation_row.operation_id IS DISTINCT FROM p_operation_id
+       OR modkit_events._utf8_valid(operation_row.event_id,256,TRUE) IS NOT TRUE
+       OR operation_row.event_digest IS DISTINCT FROM pg_catalog.sha256(operation_row.event_id)
+       OR operation_row.expected_revision IS NULL OR operation_row.expected_revision<0
+       OR operation_row.work_id IS NOT NULL OR operation_row.token IS NOT NULL
+       OR operation_row.cycle IS NOT NULL OR operation_row.attempt IS NOT NULL
+       OR operation_row.dispatch_id IS NOT NULL OR operation_row.failed_business_root IS NOT NULL
+       OR operation_row.retry_at IS NOT NULL OR operation_row.requested_result IS NOT NULL
+       OR operation_row.result_digest IS NOT NULL OR operation_row.requested_reason IS NOT NULL
+       OR operation_row.resolution_root_xid IS NOT NULL
+       OR (operation_row.requested_outcome COLLATE pg_catalog."C" IN ('published','rejected')) IS NOT TRUE
+       OR (operation_row.requested_receipt IS NOT NULL AND pg_catalog.octet_length(operation_row.requested_receipt)>4096)
+       OR operation_row.evidence IS NULL OR pg_catalog.octet_length(operation_row.evidence)>1048576
+       OR operation_row.binding IS NULL OR pg_catalog.octet_length(operation_row.binding)>1048576
+       OR operation_row.resulting_revision IS NULL OR operation_row.resulting_revision<=0
+       OR operation_row.resulting_revision::pg_catalog.numeric IS DISTINCT FROM operation_row.expected_revision::pg_catalog.numeric+1
+       OR modkit_events._instant_bytes(operation_row.recorded_at) IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication repair operation';
+    END IF;
+    IF operation_row.event_id IS DISTINCT FROM p_event_id
+       OR operation_row.expected_revision IS DISTINCT FROM p_expected_revision
+       OR pg_catalog.convert_to(operation_row.requested_outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(p_status,'UTF8')
+       OR operation_row.requested_receipt IS DISTINCT FROM p_receipt
+       OR operation_row.evidence IS DISTINCT FROM p_evidence
+       OR operation_row.binding IS DISTINCT FROM p_binding THEN
+        RAISE EXCEPTION USING ERRCODE='PZ002',MESSAGE='publication repair operation conflict';
+    END IF;
+
+    IF created_operation THEN
+        IF operation_row IS DISTINCT FROM expected_operation THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication operation postimage mismatch';
+        END IF;
+        expected_outbox := locked_outbox;
+        expected_outbox.state := p_status;
+        expected_outbox.token := NULL;
+        expected_outbox.ownership_revision := next_revision;
+        expected_outbox.lease_until := NULL;
+        expected_outbox.receipt := p_receipt;
+        expected_outbox.outcome_evidence := p_evidence;
+        expected_outbox.updated_at := final_time;
+        UPDATE modkit_events.outbox AS stored
+            SET state=p_status,token=NULL,ownership_revision=next_revision,lease_until=NULL,
+                receipt=p_receipt,outcome_evidence=p_evidence,updated_at=final_time
+            WHERE stored.event_digest=locked_outbox.event_digest
+            RETURNING stored.* INTO updated_outbox;
+        GET DIAGNOSTICS affected=ROW_COUNT;
+        IF affected<>1 OR updated_outbox IS DISTINCT FROM expected_outbox
+           OR pg_catalog.convert_to(updated_outbox.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_outbox.state,'UTF8') THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='publication repair postimage mismatch';
+        END IF;
+        history_status := CASE p_status COLLATE pg_catalog."C"
+            WHEN 'published' THEN 'repair_published'
+            WHEN 'rejected' THEN 'repair_rejected' END;
+        INSERT INTO modkit_events.publication_history AS stored
+            (event_id,intent_id,operation_id,status,receipt,evidence,binding,recorded_at)
+            VALUES(updated_outbox.event_id,updated_outbox.intent_id,p_operation_id,
+                history_status,p_receipt,p_evidence,p_binding,final_time)
+            RETURNING stored.* INTO history_row;
+        GET DIAGNOSTICS affected=ROW_COUNT;
+        IF affected<>1 OR history_row.history_id IS NULL OR history_row.history_id<=0
+           OR history_row.event_id IS DISTINCT FROM p_event_id
+           OR history_row.event_digest IS DISTINCT FROM locked_outbox.event_digest
+           OR history_row.intent_id IS DISTINCT FROM locked_outbox.intent_id
+           OR history_row.operation_id IS DISTINCT FROM p_operation_id
+           OR pg_catalog.convert_to(history_row.status,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(history_status,'UTF8')
+           OR history_row.receipt IS DISTINCT FROM p_receipt OR history_row.evidence IS DISTINCT FROM p_evidence
+           OR history_row.binding IS DISTINCT FROM p_binding OR history_row.recorded_at IS DISTINCT FROM final_time THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid publication repair history';
+        END IF;
+    END IF;
+    RETURN QUERY SELECT operation_row.operation_id,operation_row.event_id,operation_row.expected_revision,
+        operation_row.requested_outcome,operation_row.requested_receipt,operation_row.evidence,
+        operation_row.binding,operation_row.resulting_revision,operation_row.recorded_at;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e27(pg_catalog.bytea,pg_catalog.int8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea) FROM PUBLIC;

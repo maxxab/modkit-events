@@ -139,6 +139,7 @@ tests/test_publication_renewal_sql.py
 tests/test_publication_intent_sql.py
 tests/test_publication_settlement_sql.py
 tests/test_publication_recovery_sql.py
+tests/test_publication_reconciliation_sql.py
 scripts/artifact_policy.py
 pyproject.toml
 README.md
