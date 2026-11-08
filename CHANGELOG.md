@@ -18,6 +18,7 @@
 - **events:** retain typed statement backing in canonical lifecycle (`4f5a1bf092ba`)
 - **sql:** recover expired publication ownership (`83954673f651`)
 - **persistence:** execute native E14 and E28 observations (`3dd205f8c16a`)
+- **persistence:** add publication reconciliation (`a46e5f4b1628`)
 
 ### Bug Fixes
 
