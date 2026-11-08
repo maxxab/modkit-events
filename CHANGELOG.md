@@ -7,6 +7,7 @@
 - implement generic event messaging (`cdf138deb1f8`)
 - **contracts:** add explicit event and subscription contracts (`59b922a36864`)
 - **sql:** prepare bounded work listing candidate (`8e9cf5384149`)
+- **sql:** integrate bounded work listing migration (`e518749a50da`)
 
 ### Bug Fixes
 
@@ -38,3 +39,4 @@
 - keep duplicate generated workflow local (`fe1779f1c761`)
 - import unqualified Events persistence baseline (`86244add88b9`)
 - import unqualified Events release policy baseline (`432a8e7635a8`)
+- **sql:** preserve unqualified initial migration baseline (`5a45c54a4acb`)
