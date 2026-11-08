@@ -26,6 +26,7 @@
 - keep Events tests independent of Workers (`222619b39fad`)
 - preserve metadata in installed Events test staging (`e5165c2de6be`)
 - **persistence:** preserve decorated callable types (`b3f401c3bbed`)
+- **sql:** materialize bounded replay before validation (`e97efff4dc4b`)
 
 ### Documentation
 
