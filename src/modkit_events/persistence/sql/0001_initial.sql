@@ -891,8 +891,14 @@ AS $body$
 DECLARE
     result modkit_events._parse_result;
     pos pg_catalog.int4;
+    n pg_catalog.int4;
 BEGIN
-    IF p_raw IS NULL OR NOT modkit_events._utf8_valid(p_raw,1048576,FALSE)
+    IF p_raw IS NULL THEN RETURN NULL; END IF;
+    n := pg_catalog.octet_length(p_raw);
+    IF n > 1048576 THEN RETURN NULL; END IF;
+    -- Retain flat bytes once so bytewise scans do not repeatedly detoast stored input.
+    p_raw := pg_catalog.substr(p_raw,1,n);
+    IF NOT modkit_events._utf8_valid(p_raw,1048576,FALSE)
        OR pg_catalog.substr(p_raw,1,3) = pg_catalog.decode('efbbbf','hex') THEN RETURN NULL; END IF;
     pos := modkit_events._skip_json_ws(p_raw,0);
     result := modkit_events._json_value(p_raw,pos,0,262144);
