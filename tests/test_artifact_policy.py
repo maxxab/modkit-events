@@ -143,6 +143,7 @@ tests/test_contracts_subscriptions.py
 tests/test_core.py
 tests/test_isolation.py
 tests/test_managed_lifecycle.py
+tests/test_managed_statement_lifecycle.py
 tests/test_native_binary_transport.py
 tests/test_native_sql_descriptor.py
 tests/test_outbox.py
