@@ -10,6 +10,7 @@
 - **sql:** integrate bounded work listing migration (`e518749a50da`)
 - **sql:** add bounded audit history readers (`aeb2284aa19b`)
 - **sql:** add bounded publication history reader (`286db7d4dd6a`)
+- **sql:** add bounded publication claims (`51238410d020`)
 
 ### Bug Fixes
 
