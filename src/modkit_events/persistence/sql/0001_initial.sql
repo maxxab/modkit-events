@@ -4948,3 +4948,161 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e30(pg_catalog.bytea,pg_catalog.timestamptz,pg_catalog.uuid,pg_catalog.int4) FROM PUBLIC;
+
+-- E19/E20/E21 retained audit readers. Source-only until bounded runtime QA.
+-- Existing keyset indexes bound selected rows; no parent-state or commit proof.
+CREATE FUNCTION modkit_events.e19(
+    p_work_id pg_catalog.uuid,p_after_id pg_catalog.int8,p_limit pg_catalog.int4)
+RETURNS TABLE(
+    history_id pg_catalog.int8,work_id pg_catalog.uuid,cycle pg_catalog.int4,
+    attempt pg_catalog.int4,transition pg_catalog.text,reason pg_catalog.text,
+    token pg_catalog.uuid,ownership_revision pg_catalog.int8,evidence pg_catalog.bytea,
+    recorded_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    stored modkit_events.work_history%ROWTYPE;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF p_work_id IS NULL OR p_after_id IS NULL OR p_after_id<0
+       OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid work history arguments';
+    END IF;
+    FOR stored IN
+        SELECT listed.* FROM modkit_events.work_history AS listed
+         WHERE listed.work_id=p_work_id AND listed.history_id>p_after_id
+         ORDER BY listed.history_id LIMIT p_limit
+    LOOP
+        -- Inspect the selected page, never skip malformed rows with a filter.
+        IF stored.history_id IS NULL OR stored.history_id<=0
+           OR stored.work_id IS DISTINCT FROM p_work_id
+           OR stored.cycle IS DISTINCT FROM 1
+           OR stored.evidence IS NULL OR pg_catalog.octet_length(stored.evidence)>1048576
+           OR modkit_events._instant_bytes(stored.recorded_at) IS NULL
+           OR ((
+               (stored.transition COLLATE pg_catalog."C" IN ('intake_runnable','intake_blocked') AND stored.attempt=0)
+               OR (stored.transition COLLATE pg_catalog."C" IN ('claim','defer','recover_claim') AND stored.attempt BETWEEN 0 AND 999)
+               OR (stored.transition COLLATE pg_catalog."C" IN ('failure_retry','reconcile_safe_retry') AND stored.attempt BETWEEN 1 AND 999)
+               OR (stored.transition COLLATE pg_catalog."C" IN ('renew','cancel_predispatch','recover_expired_predispatch') AND stored.attempt BETWEEN 0 AND 1000)
+               OR (stored.transition COLLATE pg_catalog."C" IN ('dispatch','complete','failure_terminal','failure_cancelled','cancel_running','cancel_held',
+                    'recover_exhausted_predispatch','recover_dispatched','reconcile_success','reconcile_rejection','reconcile_cancelled','hold_uncertain')
+                    AND stored.attempt BETWEEN 1 AND 1000)
+           ) IS NOT TRUE)
+           OR ((
+               (stored.transition COLLATE pg_catalog."C" IN ('intake_runnable','intake_blocked') AND stored.ownership_revision=0 AND stored.token IS NULL)
+               OR (stored.transition COLLATE pg_catalog."C" IN ('claim','renew','dispatch') AND stored.ownership_revision>0 AND stored.token IS NOT NULL)
+               OR (stored.transition COLLATE pg_catalog."C" NOT IN ('intake_runnable','intake_blocked','claim','renew','dispatch') AND stored.ownership_revision>0 AND stored.token IS NULL)
+           ) IS NOT TRUE)
+           OR ((
+               stored.reason COLLATE pg_catalog."C" OPERATOR(pg_catalog.~) '^[a-z][a-z0-9_]{0,255}$'
+               AND (stored.transition COLLATE pg_catalog."C" IN ('failure_terminal','failure_cancelled','failure_retry','cancel_predispatch','cancel_running','cancel_held','hold_uncertain')
+                   OR (stored.transition COLLATE pg_catalog."C" = 'recover_exhausted_predispatch' AND stored.reason COLLATE pg_catalog."C" = 'attempts_exhausted')
+                   OR (stored.transition COLLATE pg_catalog."C" NOT IN ('failure_terminal','failure_cancelled','failure_retry','cancel_predispatch','cancel_running','cancel_held','hold_uncertain','recover_exhausted_predispatch')
+                       AND stored.reason COLLATE pg_catalog."C" = stored.transition COLLATE pg_catalog."C"))
+           ) IS NOT TRUE)
+           OR ((stored.transition COLLATE pg_catalog."C" IN ('failure_terminal','failure_cancelled','failure_retry','reconcile_success','reconcile_rejection','reconcile_cancelled','reconcile_safe_retry','hold_uncertain')
+               OR stored.evidence=''::pg_catalog.bytea) IS NOT TRUE) THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid work history record';
+        END IF;
+        RETURN QUERY SELECT stored.history_id,stored.work_id,stored.cycle,stored.attempt,
+            stored.transition,stored.reason,stored.token,stored.ownership_revision,
+            stored.evidence,stored.recorded_at;
+    END LOOP;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e19(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4) FROM PUBLIC;
+
+CREATE FUNCTION modkit_events.e20(
+    p_work_id pg_catalog.uuid,p_after_id pg_catalog.int8,p_limit pg_catalog.int4)
+RETURNS TABLE(
+    history_id pg_catalog.int8,work_id pg_catalog.uuid,broker_reference pg_catalog.bytea,
+    transport_observation pg_catalog.bytea,recorded_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    stored modkit_events.delivery_history%ROWTYPE;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF p_work_id IS NULL OR p_after_id IS NULL OR p_after_id<0
+       OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid delivery history arguments';
+    END IF;
+    FOR stored IN
+        SELECT listed.* FROM modkit_events.delivery_history AS listed
+         WHERE listed.work_id=p_work_id AND listed.history_id>p_after_id
+         ORDER BY listed.history_id LIMIT p_limit
+    LOOP
+        IF stored.history_id IS NULL OR stored.history_id<=0
+           OR stored.work_id IS DISTINCT FROM p_work_id
+           OR stored.broker_reference IS NULL
+           OR pg_catalog.octet_length(stored.broker_reference)>1048576
+           OR stored.transport_observation IS NULL
+           OR pg_catalog.octet_length(stored.transport_observation)>1048576
+           OR modkit_events._instant_bytes(stored.recorded_at) IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid delivery history record';
+        END IF;
+        RETURN QUERY SELECT stored.history_id,stored.work_id,stored.broker_reference,
+            stored.transport_observation,stored.recorded_at;
+    END LOOP;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e20(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4) FROM PUBLIC;
+
+CREATE FUNCTION modkit_events.e21(
+    p_work_id pg_catalog.uuid,p_after_cycle pg_catalog.int4,p_after_attempt pg_catalog.int4,
+    p_limit pg_catalog.int4)
+RETURNS TABLE(
+    work_id pg_catalog.uuid,cycle pg_catalog.int4,attempt pg_catalog.int4,
+    dispatch_id pg_catalog.uuid,effect_id pg_catalog.bytea,request_evidence pg_catalog.bytea,
+    provider_key_reference pg_catalog.bytea,dispatch_root_xid pg_catalog.xid8,
+    outcome pg_catalog.text,evidence pg_catalog.bytea,recorded_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    stored modkit_events.attempts%ROWTYPE;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF p_work_id IS NULL OR p_after_cycle IS NULL OR p_after_cycle<0
+       OR p_after_attempt IS NULL OR p_after_attempt<0
+       OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid attempt history arguments';
+    END IF;
+    FOR stored IN
+        SELECT listed.* FROM modkit_events.attempts AS listed
+         WHERE listed.work_id=p_work_id
+           AND (listed.cycle,listed.attempt)>(p_after_cycle,p_after_attempt)
+         ORDER BY listed.cycle,listed.attempt LIMIT p_limit
+    LOOP
+        IF stored.work_id IS DISTINCT FROM p_work_id
+           OR stored.cycle IS DISTINCT FROM 1
+           OR stored.attempt IS NULL OR stored.attempt NOT BETWEEN 1 AND 1000
+           OR stored.dispatch_id IS NULL
+           OR modkit_events._utf8_valid(stored.effect_id,256,TRUE) IS NOT TRUE
+           OR stored.request_evidence IS NULL OR pg_catalog.octet_length(stored.request_evidence)>1048576
+           OR (stored.provider_key_reference IS NOT NULL
+               AND modkit_events._utf8_valid(stored.provider_key_reference,256,TRUE) IS NOT TRUE)
+           OR stored.dispatch_root_xid IS NULL OR stored.dispatch_root_xid='0'::pg_catalog.xid8
+           OR (stored.outcome COLLATE pg_catalog."C" IN
+               ('dispatched','succeeded','failed','cancelled','uncertain','cancelled_unresolved','safe_retry')) IS NOT TRUE
+           OR stored.evidence IS NULL OR pg_catalog.octet_length(stored.evidence)>1048576
+           OR (stored.outcome COLLATE pg_catalog."C" IN ('dispatched','cancelled_unresolved')
+               AND stored.evidence<>''::pg_catalog.bytea)
+           OR modkit_events._instant_bytes(stored.recorded_at) IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid attempt history record';
+        END IF;
+        RETURN QUERY SELECT stored.work_id,stored.cycle,stored.attempt,stored.dispatch_id,
+            stored.effect_id,stored.request_evidence,stored.provider_key_reference,
+            stored.dispatch_root_xid,stored.outcome,stored.evidence,stored.recorded_at;
+    END LOOP;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e21(pg_catalog.uuid,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4) FROM PUBLIC;

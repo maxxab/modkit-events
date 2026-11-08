@@ -123,6 +123,7 @@ tests/test_scope_storage.py
 tests/test_sqlalchemy.py
 tests/test_standalone_package.py
 tests/test_work_listing_sql.py
+tests/test_audit_readers_sql.py
 scripts/artifact_policy.py
 pyproject.toml
 README.md
