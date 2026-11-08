@@ -32,6 +32,7 @@
 
 - clarify one-way Events and Workers dependency (`956f1d74e24e`)
 - regenerate changelog after audit readers (`39132b145833`)
+- record bounded native qualification (`5927d9e741ad`)
 
 ### Testing
 
