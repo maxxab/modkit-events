@@ -6408,3 +6408,302 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e12(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.text) FROM PUBLIC;
+
+-- E13: bounded nonblocking work recovery; dispatched effects remain uncertain.
+CREATE FUNCTION modkit_events.e13(
+    p_namespace pg_catalog.bytea,p_kind pg_catalog.text,p_limit pg_catalog.int4,
+    p_scan_after pg_catalog.uuid,p_discovery_budget pg_catalog.int4)
+RETURNS TABLE(record_type pg_catalog.text, visited pg_catalog.int4, next_cursor pg_catalog.uuid, pass_exhausted pg_catalog.bool,
+
+    work_id pg_catalog.uuid, kind pg_catalog.text, subscription_id pg_catalog.bytea,
+    namespace pg_catalog.bytea, command_type pg_catalog.bytea, schema_version_decimal pg_catalog.bytea,
+    runnable_version pg_catalog.int4, canonical_version pg_catalog.int4, scope_evidence pg_catalog.bytea,
+    scope_application pg_catalog.bytea, scope_tenant pg_catalog.bytea, scope_owner pg_catalog.bytea,
+    idempotency_key pg_catalog.bytea, intent_evidence pg_catalog.bytea, semantic_input pg_catalog.bytea,
+    replay_input pg_catalog.bytea, protected_binding pg_catalog.bytea, replay_policy pg_catalog.text,
+    max_attempts pg_catalog.int4, deadline pg_catalog.timestamptz, original_available_at pg_catalog.timestamptz,
+    state pg_catalog.text, cancellation_requested pg_catalog.bool, token pg_catalog.uuid,
+    ownership_revision pg_catalog.int8, lease_until pg_catalog.timestamptz, available_at pg_catalog.timestamptz,
+    cycle pg_catalog.int4, attempt_count pg_catalog.int4, dispatch_id pg_catalog.uuid, result pg_catalog.bytea,
+    created_at pg_catalog.timestamptz, updated_at pg_catalog.timestamptz, success_origin pg_catalog.text,
+    completion_guard_id pg_catalog.uuid, final_fence_at pg_catalog.timestamptz,
+    completion_result_digest pg_catalog.bytea, resolution_operation_id pg_catalog.uuid,
+    terminal_resolution_operation_id pg_catalog.uuid, resolution_present pg_catalog.bool,
+    resolution_record_operation_id pg_catalog.uuid, resolution_record_operation_kind pg_catalog.text,
+    resolution_record_work_id pg_catalog.uuid, resolution_record_expected_revision pg_catalog.int8,
+    resolution_record_cycle pg_catalog.int4, resolution_record_attempt pg_catalog.int4,
+    resolution_record_dispatch_id pg_catalog.uuid, resolution_record_outcome pg_catalog.text,
+    resolution_record_retry_at pg_catalog.timestamptz, resolution_record_result pg_catalog.bytea,
+    resolution_record_result_digest pg_catalog.bytea, resolution_record_reason pg_catalog.text,
+    resolution_record_evidence pg_catalog.bytea, resolution_record_binding pg_catalog.bytea,
+    resolution_record_resolution_root_xid pg_catalog.xid8, resolution_record_recorded_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    discovered pg_catalog.record;
+    captured pg_catalog.record;
+    w modkit_events.work%ROWTYPE;
+    fresh_work modkit_events.work%ROWTYPE;
+    expected_work modkit_events.work%ROWTYPE;
+    updated_work modkit_events.work%ROWTYPE;
+    subscription_row modkit_events.subscriptions%ROWTYPE;
+    expected_parent modkit_events.subscriptions%ROWTYPE;
+    updated_parent modkit_events.subscriptions%ROWTYPE;
+    locked_attempt modkit_events.attempts%ROWTYPE;
+    attempt_row modkit_events.attempts%ROWTYPE;
+    expected_attempt modkit_events.attempts%ROWTYPE;
+    updated_attempt modkit_events.attempts%ROWTYPE;
+    history_row modkit_events.work_history%ROWTYPE;
+    is_job pg_catalog.bool;
+    final_time pg_catalog.timestamptz;
+    affected pg_catalog.int8;
+    transition_code pg_catalog.text;
+    history_reason pg_catalog.text;
+    cursor_value pg_catalog.uuid;
+    visited_count pg_catalog.int4 := 0;
+    item_count pg_catalog.int4 := 0;
+    exhausted_value pg_catalog.bool := FALSE;
+    emitted_rows modkit_events.work[];
+    emitted modkit_events.work%ROWTYPE;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF modkit_events._utf8_valid(p_namespace,256,TRUE) IS NOT TRUE
+       OR (pg_catalog.convert_to(p_kind,'UTF8') IN
+          (pg_catalog.convert_to('job','UTF8'),pg_catalog.convert_to('inbox','UTF8'))) IS NOT TRUE
+       OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 256
+       OR p_discovery_budget IS NULL OR p_discovery_budget NOT BETWEEN 1 AND 4096
+       OR p_discovery_budget<p_limit THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid work recovery arguments';
+    END IF;
+    cursor_value := p_scan_after;
+    emitted_rows := ARRAY[]::modkit_events.work[];
+    WHILE visited_count<p_discovery_budget AND item_count<p_limit LOOP
+        -- Raw identities count even when ineligible or locked; skips certify progress only.
+        IF cursor_value IS NULL THEN
+            SELECT wr.work_id,wr.kind,wr.subscription_id,wr.state INTO discovered
+              FROM modkit_events.work AS wr
+              WHERE wr.namespace=p_namespace AND wr.kind=p_kind
+                AND wr.kind COLLATE pg_catalog."C"=p_kind COLLATE pg_catalog."C"
+              ORDER BY wr.work_id LIMIT 1;
+        ELSE
+            SELECT wr.work_id,wr.kind,wr.subscription_id,wr.state INTO discovered
+              FROM modkit_events.work AS wr
+              WHERE wr.namespace=p_namespace AND wr.kind=p_kind AND wr.work_id>cursor_value
+                AND wr.kind COLLATE pg_catalog."C"=p_kind COLLATE pg_catalog."C"
+              ORDER BY wr.work_id LIMIT 1;
+        END IF;
+        IF NOT FOUND THEN
+            exhausted_value := TRUE;
+            EXIT;
+        END IF;
+        visited_count := visited_count+1;
+        cursor_value := discovered.work_id;
+        IF (discovered.state COLLATE pg_catalog."C" IN
+            ('queued','retry_waiting','claimed','blocked_schema','running')) IS NOT TRUE THEN
+            CONTINUE;
+        END IF;
+        IF pg_catalog.convert_to(discovered.kind,'UTF8')=pg_catalog.convert_to('job','UTF8') THEN
+            is_job := TRUE;
+            IF discovered.subscription_id IS NOT NULL THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid work parent shape';
+            END IF;
+        ELSE
+            is_job := FALSE;
+            IF modkit_events._utf8_valid(discovered.subscription_id,256,TRUE) IS NOT TRUE THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid work parent shape';
+            END IF;
+        END IF;
+        IF NOT is_job THEN
+            PERFORM parent.subscription_id FROM modkit_events.subscriptions AS parent
+              WHERE parent.subscription_id=discovered.subscription_id
+              FOR NO KEY UPDATE OF parent SKIP LOCKED;
+            IF NOT FOUND THEN
+                IF NOT EXISTS(SELECT 1 FROM modkit_events.subscriptions AS parent
+                              WHERE parent.subscription_id=discovered.subscription_id) THEN
+                    RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing work subscription';
+                END IF;
+                CONTINUE;
+            END IF;
+        END IF;
+        SELECT stored.* INTO w FROM modkit_events.work AS stored
+          WHERE stored.work_id=discovered.work_id FOR NO KEY UPDATE OF stored SKIP LOCKED;
+        IF NOT FOUND THEN
+            IF NOT EXISTS(SELECT 1 FROM modkit_events.work AS stored WHERE stored.work_id=discovered.work_id) THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing discovered work';
+            END IF;
+            CONTINUE;
+        END IF;
+        IF w.work_id IS DISTINCT FROM discovered.work_id
+           OR pg_catalog.convert_to(w.kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(discovered.kind,'UTF8')
+           OR w.subscription_id IS DISTINCT FROM discovered.subscription_id
+           OR w.namespace IS DISTINCT FROM p_namespace THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='work identity changed during acquisition';
+        END IF;
+        IF w.dispatch_id IS NOT NULL THEN
+            SELECT current_attempt.* INTO locked_attempt FROM modkit_events.attempts AS current_attempt
+              WHERE current_attempt.work_id=w.work_id AND current_attempt.cycle=w.cycle
+                AND current_attempt.attempt=w.attempt_count AND current_attempt.dispatch_id=w.dispatch_id
+              FOR NO KEY UPDATE OF current_attempt SKIP LOCKED;
+            IF NOT FOUND THEN
+                IF NOT EXISTS(SELECT 1 FROM modkit_events.attempts AS current_attempt
+                              WHERE current_attempt.work_id=w.work_id AND current_attempt.cycle=w.cycle
+                                AND current_attempt.attempt=w.attempt_count AND current_attempt.dispatch_id=w.dispatch_id) THEN
+                    RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing current dispatch';
+                END IF;
+                CONTINUE;
+            END IF;
+        END IF;
+        -- E15 and all preimages share one fresh snapshot after all nonblocking entity locks.
+        SELECT stored AS current_work,parent AS current_parent,current_attempt AS current_dispatch,
+               checked.*,pg_catalog.count(*) OVER () AS selected_count
+          INTO captured
+          FROM modkit_events.work AS stored
+          CROSS JOIN LATERAL modkit_events.e15(stored.work_id) AS checked
+          LEFT JOIN modkit_events.subscriptions AS parent ON parent.subscription_id=stored.subscription_id
+          LEFT JOIN modkit_events.attempts AS current_attempt
+            ON current_attempt.work_id=stored.work_id AND current_attempt.cycle=stored.cycle
+              AND current_attempt.attempt=stored.attempt_count AND current_attempt.dispatch_id=stored.dispatch_id
+          WHERE stored.work_id=w.work_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing full recovery observation';
+        END IF;
+        IF captured.selected_count IS DISTINCT FROM 1 THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid full recovery cardinality';
+        END IF;
+        fresh_work := captured.current_work;
+        subscription_row := captured.current_parent;
+        attempt_row := captured.current_dispatch;
+        IF fresh_work IS DISTINCT FROM w
+           OR pg_catalog.convert_to(fresh_work.kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(w.kind,'UTF8')
+           OR pg_catalog.convert_to(fresh_work.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(w.state,'UTF8')
+           OR pg_catalog.convert_to(fresh_work.replay_policy,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(w.replay_policy,'UTF8')
+           OR captured.work_id IS DISTINCT FROM w.work_id THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='work changed under held locks';
+        END IF;
+        w := fresh_work;
+        IF w.dispatch_id IS NOT NULL AND (
+           attempt_row.work_id IS DISTINCT FROM w.work_id OR attempt_row.cycle IS DISTINCT FROM w.cycle
+           OR attempt_row.attempt IS DISTINCT FROM w.attempt_count OR attempt_row.dispatch_id IS DISTINCT FROM w.dispatch_id
+           OR attempt_row IS DISTINCT FROM locked_attempt
+           OR pg_catalog.convert_to(attempt_row.outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(locked_attempt.outcome,'UTF8')) THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='dispatch changed under held locks';
+        END IF;
+        -- A concurrent terminal transition can legitimately leave a zero parent count.
+        IF (w.state COLLATE pg_catalog."C" IN
+            ('queued','retry_waiting','claimed','blocked_schema','running')) IS NOT TRUE THEN
+            CONTINUE;
+        END IF;
+        IF NOT is_job AND (subscription_row.subscription_id IS DISTINCT FROM w.subscription_id
+           OR subscription_row.nonterminal_count IS NULL OR subscription_row.nonterminal_count<=0) THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid nonterminal parent count';
+        END IF;
+        final_time := pg_catalog.clock_timestamp();
+        IF modkit_events._instant_bytes(final_time) IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid final database time';
+        END IF;
+        -- An exhausted fence cannot be reused, even for recovery. Integrity was checked first.
+        IF w.ownership_revision=9223372036854775807::pg_catalog.int8 THEN
+            CONTINUE;
+        END IF;
+        expected_work := w;
+        IF w.state COLLATE pg_catalog."C" IN ('queued','retry_waiting','claimed','blocked_schema') THEN
+            -- Deadline wins when both deadline and budget predicates hold.
+            IF w.deadline IS NOT NULL AND final_time>=w.deadline THEN
+                transition_code := 'recover_expired_predispatch';
+                expected_work.state := 'expired';
+            ELSIF w.state COLLATE pg_catalog."C" IN ('queued','retry_waiting','claimed')
+                  AND w.attempt_count>=w.max_attempts THEN
+                transition_code := 'recover_exhausted_predispatch';
+                expected_work.state := 'failed';
+            ELSIF w.state COLLATE pg_catalog."C" = 'claimed' AND final_time>=w.lease_until THEN
+                transition_code := 'recover_claim';
+                expected_work.state := 'queued';
+            ELSE
+                CONTINUE;
+            END IF;
+        ELSIF w.state COLLATE pg_catalog."C" = 'running'
+              AND (final_time>=w.lease_until OR (w.deadline IS NOT NULL AND final_time>=w.deadline)) THEN
+            transition_code := 'recover_dispatched';
+            expected_work.state := 'held';
+        ELSE
+            CONTINUE;
+        END IF;
+        history_reason := transition_code;
+        IF transition_code COLLATE pg_catalog."C" = 'recover_exhausted_predispatch' THEN
+            history_reason := 'attempts_exhausted';
+        END IF;
+        expected_work.token := NULL;
+        expected_work.lease_until := NULL;
+        expected_work.ownership_revision := w.ownership_revision+1;
+        expected_work.updated_at := final_time;
+        IF transition_code COLLATE pg_catalog."C" = 'recover_dispatched' THEN
+            expected_attempt := attempt_row;
+            expected_attempt.outcome := 'uncertain';
+            expected_attempt.evidence := ''::pg_catalog.bytea;
+            UPDATE modkit_events.attempts AS stored SET outcome='uncertain',evidence=''::pg_catalog.bytea
+              WHERE stored.work_id=w.work_id AND stored.cycle=w.cycle
+                AND stored.attempt=w.attempt_count AND stored.dispatch_id=w.dispatch_id
+              RETURNING stored.* INTO updated_attempt;
+            GET DIAGNOSTICS affected = ROW_COUNT;
+            IF affected<>1 OR updated_attempt IS DISTINCT FROM expected_attempt
+               OR pg_catalog.convert_to(updated_attempt.outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_attempt.outcome,'UTF8') THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='dispatch update postimage mismatch';
+            END IF;
+        END IF;
+        UPDATE modkit_events.work AS stored SET state=expected_work.state,
+            token=NULL,lease_until=NULL,ownership_revision=expected_work.ownership_revision,updated_at=final_time
+          WHERE stored.work_id=w.work_id RETURNING stored.* INTO updated_work;
+        GET DIAGNOSTICS affected = ROW_COUNT;
+        IF affected<>1 OR updated_work IS DISTINCT FROM expected_work
+           OR pg_catalog.convert_to(updated_work.kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.kind,'UTF8')
+           OR pg_catalog.convert_to(updated_work.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.state,'UTF8')
+           OR pg_catalog.convert_to(updated_work.replay_policy,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.replay_policy,'UTF8') THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='work update postimage mismatch';
+        END IF;
+        IF expected_work.state COLLATE pg_catalog."C" IN ('expired','failed') AND NOT is_job THEN
+            expected_parent := subscription_row;
+            expected_parent.nonterminal_count := subscription_row.nonterminal_count-1;
+            UPDATE modkit_events.subscriptions AS parent SET nonterminal_count=expected_parent.nonterminal_count
+              WHERE parent.subscription_id=w.subscription_id RETURNING parent.* INTO updated_parent;
+            GET DIAGNOSTICS affected = ROW_COUNT;
+            IF affected<>1 OR updated_parent IS DISTINCT FROM expected_parent THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='subscription update postimage mismatch';
+            END IF;
+        END IF;
+        INSERT INTO modkit_events.work_history AS stored
+            (work_id,cycle,attempt,transition,reason,token,ownership_revision,evidence,recorded_at)
+          VALUES(updated_work.work_id,updated_work.cycle,updated_work.attempt_count,transition_code,
+                 history_reason,NULL,updated_work.ownership_revision,''::pg_catalog.bytea,final_time)
+          RETURNING stored.* INTO history_row;
+        GET DIAGNOSTICS affected = ROW_COUNT;
+        IF affected<>1 OR history_row.history_id IS NULL OR history_row.history_id<=0
+           OR history_row.work_id IS DISTINCT FROM updated_work.work_id
+           OR history_row.cycle IS DISTINCT FROM updated_work.cycle
+           OR history_row.attempt IS DISTINCT FROM updated_work.attempt_count
+           OR pg_catalog.convert_to(history_row.transition,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(transition_code,'UTF8')
+           OR pg_catalog.convert_to(history_row.reason,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(history_reason,'UTF8')
+           OR history_row.token IS NOT NULL
+           OR history_row.ownership_revision IS DISTINCT FROM updated_work.ownership_revision
+           OR history_row.evidence IS DISTINCT FROM ''::pg_catalog.bytea
+           OR history_row.recorded_at IS DISTINCT FROM final_time THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid recovery history receipt';
+        END IF;
+        emitted_rows := pg_catalog.array_append(emitted_rows,updated_work);
+        item_count := item_count+1;
+    END LOOP;
+    IF visited_count=p_discovery_budget OR item_count=p_limit THEN
+        exhausted_value := FALSE;
+    END IF;
+    -- No STABLE post-write reader: these are already validated, retained postimages.
+    RETURN QUERY SELECT 'header'::pg_catalog.text,visited_count,cursor_value,exhausted_value,
+        NULL::pg_catalog.uuid,NULL::pg_catalog.text,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.int4,NULL::pg_catalog.int4,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.text,NULL::pg_catalog.int4,NULL::pg_catalog.timestamptz,NULL::pg_catalog.timestamptz,NULL::pg_catalog.text,NULL::pg_catalog.bool,NULL::pg_catalog.uuid,NULL::pg_catalog.int8,NULL::pg_catalog.timestamptz,NULL::pg_catalog.timestamptz,NULL::pg_catalog.int4,NULL::pg_catalog.int4,NULL::pg_catalog.uuid,NULL::pg_catalog.bytea,NULL::pg_catalog.timestamptz,NULL::pg_catalog.timestamptz,NULL::pg_catalog.text,NULL::pg_catalog.uuid,NULL::pg_catalog.timestamptz,NULL::pg_catalog.bytea,NULL::pg_catalog.uuid,NULL::pg_catalog.uuid,NULL::pg_catalog.bool,NULL::pg_catalog.uuid,NULL::pg_catalog.text,NULL::pg_catalog.uuid,NULL::pg_catalog.int8,NULL::pg_catalog.int4,NULL::pg_catalog.int4,NULL::pg_catalog.uuid,NULL::pg_catalog.text,NULL::pg_catalog.timestamptz,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.text,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.xid8,NULL::pg_catalog.timestamptz;
+    FOREACH emitted IN ARRAY emitted_rows LOOP
+        RETURN QUERY SELECT 'item'::pg_catalog.text,NULL::pg_catalog.int4,NULL::pg_catalog.uuid,NULL::pg_catalog.bool,
+            emitted.work_id,emitted.kind,emitted.subscription_id,emitted.namespace,emitted.command_type,emitted.schema_version_decimal,emitted.runnable_version,emitted.canonical_version,emitted.scope_evidence,emitted.scope_application,emitted.scope_tenant,emitted.scope_owner,emitted.idempotency_key,emitted.intent_evidence,emitted.semantic_input,emitted.replay_input,emitted.protected_binding,emitted.replay_policy,emitted.max_attempts,emitted.deadline,emitted.original_available_at,emitted.state,emitted.cancellation_requested,emitted.token,emitted.ownership_revision,emitted.lease_until,emitted.available_at,emitted.cycle,emitted.attempt_count,emitted.dispatch_id,emitted.result,emitted.created_at,emitted.updated_at,emitted.success_origin,emitted.completion_guard_id,emitted.final_fence_at,emitted.completion_result_digest,emitted.resolution_operation_id,emitted.terminal_resolution_operation_id,FALSE::pg_catalog.bool,NULL::pg_catalog.uuid,NULL::pg_catalog.text,NULL::pg_catalog.uuid,NULL::pg_catalog.int8,NULL::pg_catalog.int4,NULL::pg_catalog.int4,NULL::pg_catalog.uuid,NULL::pg_catalog.text,NULL::pg_catalog.timestamptz,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.text,NULL::pg_catalog.bytea,NULL::pg_catalog.bytea,NULL::pg_catalog.xid8,NULL::pg_catalog.timestamptz;
+    END LOOP;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e13(pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.uuid,pg_catalog.int4) FROM PUBLIC;
