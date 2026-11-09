@@ -42,6 +42,8 @@
 - **sql:** materialize bounded replay before validation (`e97efff4dc4b`)
 - **events:** preserve failure disposition when diagnostics raise (`ba99eedece76`)
 - **events:** match grant attestation to declared table columns (`8d8396d35d5c`)
+- **events:** group CASE expressions in grant attestation conditions (`99cedcd4f693`)
+- **types:** describe validated resource and lifecycle values precisely (`25859258681d`)
 
 ### Documentation
 
@@ -50,6 +52,7 @@
 - record bounded native qualification (`5927d9e741ad`)
 - **events:** reconcile qualification evidence and current migration pins (`4a633e6e8e4f`)
 - **events:** record exact Git recovery after host restart (`cd03f000d4f1`)
+- **qualification:** record reviewed source and bounded wheel stop (`af287b719c5e`)
 
 ### Testing
 
@@ -68,6 +71,7 @@
 - verify package and Redis integration across supported runtimes (`f59bea38aae8`)
 - pin current v7 checkout and Python setup actions (`d98a979f3f22`)
 - publish tested releases with trusted identity (`d0cbd54c5c9b`)
+- **events:** separate installed behavior from source qualification (`a41687360a57`)
 
 ### Maintenance
 
@@ -78,3 +82,5 @@
 - **sql:** preserve unqualified initial migration baseline (`5a45c54a4acb`)
 - checkpoint reviewed native recovery (`eb782777dd54`)
 - preserve installation closure checkpoint (`ad1f3cf8f85e`)
+- **events:** apply canonical Python formatting (`6b23651a3c7b`)
+- **persistence:** normalize imports and retain module aliases (`4fd1829f2e66`)
