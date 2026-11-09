@@ -2101,6 +2101,168 @@ _E31 = _SqlDescriptor(
 )
 
 
+
+# Fixed canonical E13 transport. All 60 cells survive; only oversized payloads are nulled.
+_E13_SQL = b"""WITH source AS MATERIALIZED (
+    SELECT s.record_type, s.visited, s.next_cursor, s.pass_exhausted, s.work_id, s.kind, s.subscription_id, s.namespace, s.command_type, s.schema_version_decimal, s.runnable_version, s.canonical_version, s.scope_evidence, s.scope_application, s.scope_tenant, s.scope_owner, s.idempotency_key, s.intent_evidence, s.semantic_input, s.replay_input, s.protected_binding, s.replay_policy, s.max_attempts, s.deadline, s.original_available_at, s.state, s.cancellation_requested, s.token, s.ownership_revision, s.lease_until, s.available_at, s.cycle, s.attempt_count, s.dispatch_id, s.result, s.created_at, s.updated_at, s.success_origin, s.completion_guard_id, s.final_fence_at, s.completion_result_digest, s.resolution_operation_id, s.terminal_resolution_operation_id, s.resolution_present, s.resolution_record_operation_id, s.resolution_record_operation_kind, s.resolution_record_work_id, s.resolution_record_expected_revision, s.resolution_record_cycle, s.resolution_record_attempt, s.resolution_record_dispatch_id, s.resolution_record_outcome, s.resolution_record_retry_at, s.resolution_record_result, s.resolution_record_result_digest, s.resolution_record_reason, s.resolution_record_evidence, s.resolution_record_binding, s.resolution_record_resolution_root_xid, s.resolution_record_recorded_at
+    FROM modkit_events.e13($1::pg_catalog.bytea, $2::pg_catalog.text, $3::pg_catalog.int4, $4::pg_catalog.uuid, $5::pg_catalog.int4) AS s
+    LIMIT ($3::pg_catalog.int4 + 2)
+), checked AS (
+    SELECT s.*, ((s.record_type IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.record_type, 'UTF8')) OPERATOR(pg_catalog.<=) 6)
+        AND (s.kind IS NULL OR pg_catalog.octet_length(pg_catalog.convert_to(s.kind, 'UTF8')) OPERATOR(pg_catalog.<=) 5)
+        AND (s.subscription_id IS NULL OR pg_catalog.octet_length(s.subscription_id) OPERATOR(pg_catalog.<=) 256)
+        AND (s.namespace IS NULL OR pg_catalog.octet_length(s.namespace) OPERATOR(pg_catalog.<=) 256)
+        AND (s.command_type IS NULL OR pg_catalog.octet_length(s.command_type) OPERATOR(pg_catalog.<=) 256)
+        AND (s.schema_version_decimal IS NULL OR pg_catalog.octet_length(s.schema_version_decimal) OPERATOR(pg_catalog.<=) 4096)
+        AND (s.scope_evidence IS NULL OR pg_catalog.octet_length(s.scope_evidence) OPERATOR(pg_catalog.<=) 781)
+        AND (s.scope_application IS NULL OR pg_catalog.octet_length(s.scope_application) OPERATOR(pg_catalog.<=) 256)
+        AND (s.scope_tenant IS NULL OR pg_catalog.octet_length(s.scope_tenant) OPERATOR(pg_catalog.<=) 256)
+        AND (s.scope_owner IS NULL OR pg_catalog.octet_length(s.scope_owner) OPERATOR(pg_catalog.<=) 256)
+        AND (s.idempotency_key IS NULL OR pg_catalog.octet_length(s.idempotency_key) OPERATOR(pg_catalog.<=) 256)
+        AND (s.intent_evidence IS NULL OR pg_catalog.octet_length(s.intent_evidence) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.semantic_input IS NULL OR pg_catalog.octet_length(s.semantic_input) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.replay_input IS NULL OR pg_catalog.octet_length(s.replay_input) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.protected_binding IS NULL OR pg_catalog.octet_length(s.protected_binding) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.replay_policy IS NULL OR pg_catalog.octet_length(pg_catalog.convert_to(s.replay_policy, 'UTF8')) OPERATOR(pg_catalog.<=) 16)
+        AND (s.state IS NULL OR pg_catalog.octet_length(pg_catalog.convert_to(s.state, 'UTF8')) OPERATOR(pg_catalog.<=) 14)
+        AND (s.result IS NULL OR pg_catalog.octet_length(s.result) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.success_origin IS NULL OR pg_catalog.octet_length(pg_catalog.convert_to(s.success_origin, 'UTF8')) OPERATOR(pg_catalog.<=) 10)
+        AND (s.completion_result_digest IS NULL OR pg_catalog.octet_length(s.completion_result_digest) OPERATOR(pg_catalog.<=) 32)
+        AND (s.resolution_record_operation_kind IS NULL OR pg_catalog.octet_length(pg_catalog.convert_to(s.resolution_record_operation_kind, 'UTF8')) OPERATOR(pg_catalog.<=) 14)
+        AND (s.resolution_record_outcome IS NULL OR pg_catalog.octet_length(pg_catalog.convert_to(s.resolution_record_outcome, 'UTF8')) OPERATOR(pg_catalog.<=) 19)
+        AND (s.resolution_record_result IS NULL OR pg_catalog.octet_length(s.resolution_record_result) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.resolution_record_result_digest IS NULL OR pg_catalog.octet_length(s.resolution_record_result_digest) OPERATOR(pg_catalog.<=) 32)
+        AND (s.resolution_record_reason IS NULL OR pg_catalog.octet_length(pg_catalog.convert_to(s.resolution_record_reason, 'UTF8')) OPERATOR(pg_catalog.<=) 256)
+        AND (s.resolution_record_evidence IS NULL OR pg_catalog.octet_length(s.resolution_record_evidence) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.resolution_record_binding IS NULL OR pg_catalog.octet_length(s.resolution_record_binding) OPERATOR(pg_catalog.<=) 1048576)) IS TRUE AS cap_ok FROM source AS s
+)
+SELECT c.cap_ok,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.record_type, 'UTF8') ELSE NULL::pg_catalog.bytea END AS record_type,
+       c.visited,
+       c.next_cursor,
+       c.pass_exhausted,
+       c.work_id,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.kind, 'UTF8') ELSE NULL::pg_catalog.bytea END AS kind,
+       CASE WHEN c.cap_ok THEN c.subscription_id ELSE NULL::pg_catalog.bytea END AS subscription_id,
+       CASE WHEN c.cap_ok THEN c.namespace ELSE NULL::pg_catalog.bytea END AS namespace,
+       CASE WHEN c.cap_ok THEN c.command_type ELSE NULL::pg_catalog.bytea END AS command_type,
+       CASE WHEN c.cap_ok THEN c.schema_version_decimal ELSE NULL::pg_catalog.bytea END AS schema_version_decimal,
+       c.runnable_version,
+       c.canonical_version,
+       CASE WHEN c.cap_ok THEN c.scope_evidence ELSE NULL::pg_catalog.bytea END AS scope_evidence,
+       CASE WHEN c.cap_ok THEN c.scope_application ELSE NULL::pg_catalog.bytea END AS scope_application,
+       CASE WHEN c.cap_ok THEN c.scope_tenant ELSE NULL::pg_catalog.bytea END AS scope_tenant,
+       CASE WHEN c.cap_ok THEN c.scope_owner ELSE NULL::pg_catalog.bytea END AS scope_owner,
+       CASE WHEN c.cap_ok THEN c.idempotency_key ELSE NULL::pg_catalog.bytea END AS idempotency_key,
+       CASE WHEN c.cap_ok THEN c.intent_evidence ELSE NULL::pg_catalog.bytea END AS intent_evidence,
+       CASE WHEN c.cap_ok THEN c.semantic_input ELSE NULL::pg_catalog.bytea END AS semantic_input,
+       CASE WHEN c.cap_ok THEN c.replay_input ELSE NULL::pg_catalog.bytea END AS replay_input,
+       CASE WHEN c.cap_ok THEN c.protected_binding ELSE NULL::pg_catalog.bytea END AS protected_binding,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.replay_policy, 'UTF8') ELSE NULL::pg_catalog.bytea END AS replay_policy,
+       c.max_attempts,
+       c.deadline,
+       c.original_available_at,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.state, 'UTF8') ELSE NULL::pg_catalog.bytea END AS state,
+       c.cancellation_requested,
+       c.token,
+       c.ownership_revision,
+       c.lease_until,
+       c.available_at,
+       c.cycle,
+       c.attempt_count,
+       c.dispatch_id,
+       CASE WHEN c.cap_ok THEN c.result ELSE NULL::pg_catalog.bytea END AS result,
+       c.created_at,
+       c.updated_at,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.success_origin, 'UTF8') ELSE NULL::pg_catalog.bytea END AS success_origin,
+       c.completion_guard_id,
+       c.final_fence_at,
+       CASE WHEN c.cap_ok THEN c.completion_result_digest ELSE NULL::pg_catalog.bytea END AS completion_result_digest,
+       c.resolution_operation_id,
+       c.terminal_resolution_operation_id,
+       c.resolution_present,
+       c.resolution_record_operation_id,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.resolution_record_operation_kind, 'UTF8') ELSE NULL::pg_catalog.bytea END AS resolution_record_operation_kind,
+       c.resolution_record_work_id,
+       c.resolution_record_expected_revision,
+       c.resolution_record_cycle,
+       c.resolution_record_attempt,
+       c.resolution_record_dispatch_id,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.resolution_record_outcome, 'UTF8') ELSE NULL::pg_catalog.bytea END AS resolution_record_outcome,
+       c.resolution_record_retry_at,
+       CASE WHEN c.cap_ok THEN c.resolution_record_result ELSE NULL::pg_catalog.bytea END AS resolution_record_result,
+       CASE WHEN c.cap_ok THEN c.resolution_record_result_digest ELSE NULL::pg_catalog.bytea END AS resolution_record_result_digest,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.resolution_record_reason, 'UTF8') ELSE NULL::pg_catalog.bytea END AS resolution_record_reason,
+       CASE WHEN c.cap_ok THEN c.resolution_record_evidence ELSE NULL::pg_catalog.bytea END AS resolution_record_evidence,
+       CASE WHEN c.cap_ok THEN c.resolution_record_binding ELSE NULL::pg_catalog.bytea END AS resolution_record_binding,
+       c.resolution_record_resolution_root_xid,
+       c.resolution_record_recorded_at
+FROM checked AS c
+ORDER BY c.record_type, c.work_id"""
+_E13_COLUMNS = (
+    _TransportColumn(name="cap_ok", wire_type=WireType.BOOL, oid=16, nullable=False, max_payload_bytes=1),
+    _TransportColumn(name='record_type', wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=6),
+    _TransportColumn(name='visited', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='next_cursor', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='pass_exhausted', wire_type=WireType.BOOL, oid=16, nullable=True, max_payload_bytes=1),
+    _TransportColumn(name='work_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='kind', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=5),
+    _TransportColumn(name='subscription_id', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='namespace', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='command_type', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='schema_version_decimal', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=4096),
+    _TransportColumn(name='runnable_version', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='canonical_version', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='scope_evidence', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=781),
+    _TransportColumn(name='scope_application', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='scope_tenant', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='scope_owner', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='idempotency_key', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='intent_evidence', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='semantic_input', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='replay_input', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='protected_binding', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='replay_policy', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='max_attempts', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='deadline', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='original_available_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='state', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=14),
+    _TransportColumn(name='cancellation_requested', wire_type=WireType.BOOL, oid=16, nullable=True, max_payload_bytes=1),
+    _TransportColumn(name='token', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='ownership_revision', wire_type=WireType.INT8, oid=20, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='lease_until', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='available_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='cycle', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='attempt_count', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='dispatch_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='result', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='created_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='updated_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='success_origin', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=10),
+    _TransportColumn(name='completion_guard_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='final_fence_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='completion_result_digest', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=32),
+    _TransportColumn(name='resolution_operation_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='terminal_resolution_operation_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='resolution_present', wire_type=WireType.BOOL, oid=16, nullable=True, max_payload_bytes=1),
+    _TransportColumn(name='resolution_record_operation_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='resolution_record_operation_kind', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=14),
+    _TransportColumn(name='resolution_record_work_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='resolution_record_expected_revision', wire_type=WireType.INT8, oid=20, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='resolution_record_cycle', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='resolution_record_attempt', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
+    _TransportColumn(name='resolution_record_dispatch_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
+    _TransportColumn(name='resolution_record_outcome', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=19),
+    _TransportColumn(name='resolution_record_retry_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='resolution_record_result', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='resolution_record_result_digest', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=32),
+    _TransportColumn(name='resolution_record_reason', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
+    _TransportColumn(name='resolution_record_evidence', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='resolution_record_binding', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
+    _TransportColumn(name='resolution_record_resolution_root_xid', wire_type=WireType.XID8, oid=5069, nullable=True, max_payload_bytes=8),
+    _TransportColumn(name='resolution_record_recorded_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+)
+
 def _selected_sql_descriptor(
     spec: StatementSpec, operation=None, *, request=None, max_page_payload_bytes=None
 ) -> _SqlDescriptor:
@@ -2187,6 +2349,20 @@ def _selected_sql_descriptor(
     _statement_shape_raw(spec)
     if max_page_payload_bytes is not None:
         _reject_validation()
+    if spec is get_statement("E13"):
+        from .recovery_profile import _validate_recovery_request
+
+        limit = _validate_recovery_request(request)
+        return _SqlDescriptor(
+            sql=_E13_SQL,
+            parameter_casts=("pg_catalog.bytea", "pg_catalog.text", "pg_catalog.int4",
+                             "pg_catalog.uuid", "pg_catalog.int4"),
+            canonical_columns=spec.result.columns,
+            transport_columns=_E13_COLUMNS,
+            cardinality=CardinalityKind.SCAN,
+            sentinel_limit=limit + 2,
+            max_admitted_cell_payload_bytes=8395973,
+        )
     if spec is get_statement("E33"):
         return _E33
     if spec is get_statement("E05"):

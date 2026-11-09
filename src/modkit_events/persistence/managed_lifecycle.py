@@ -752,6 +752,37 @@ def _listing_capacity_error(preparation, capacity):
 
     profile = preparation.get("profile")
     if profile is None:
+        request = preparation.get("data")
+        if type(request) is not FrozenRequest:
+            return None
+        # Validate canonical metadata even for copied E13 statements, rather
+        # than trusting a caller-controlled key to choose the safety gate.
+        from .catalog import StatementSpec
+        statement = request.statement
+        if type(statement) is not StatementSpec:
+            return ErrorCode.PROFILE_REJECTED
+        if statement is not get_statement("E13"):
+            if type(statement.key) is not str or statement.key == "E13":
+                return ErrorCode.PROFILE_REJECTED
+            return None
+        from .recovery_profile import (
+            _recovery_preparation_min,
+            _recovery_result_min,
+            _validate_recovery_request,
+        )
+        try:
+            limit = _validate_recovery_request(request)
+            minimum_a = _recovery_preparation_min()
+            minimum_b = _recovery_result_min(limit)
+            paid = preparation.get("capacity")
+            if (type(paid) is not int or paid < minimum_a
+                    or _preparation_size(request) > paid
+                    or type(capacity) is not int or capacity < minimum_b):
+                return ErrorCode.CAPACITY_EXCEEDED
+        except _ValidationReject as error:
+            if type(error) is not _ValidationReject:
+                raise
+            return ErrorCode.PROFILE_REJECTED
         return None
     try:
         _validate_operation(profile)
@@ -1022,7 +1053,18 @@ def result_capacity(ticket, /, *, execution_ledger):
                 else:
                     profile = preparation.get("profile")
                     if profile is None:
-                        code = ErrorCode.PROFILE_REJECTED
+                        from .recovery_profile import (
+                            _recovery_result_min,
+                            _validate_recovery_request,
+                        )
+                        try:
+                            capacity = _recovery_result_min(
+                                _validate_recovery_request(preparation["data"])
+                            )
+                        except _ValidationReject as error:
+                            if type(error) is not _ValidationReject:
+                                raise
+                            code = ErrorCode.PROFILE_REJECTED
                     else:
                         try:
                             from .native_profile import _validate_operation
@@ -1126,6 +1168,20 @@ def _typed_result_size(request, payload):
     from .observations import GuardRow, ResolutionObservation, SettlementObservation
     from .rows import _decode_native_event_result_raw
 
+    if request.statement is get_statement("E13"):
+        from .rows import _validate_recovery_page_raw
+
+        _validate_recovery_page_raw(request, payload)
+        columns = request.statement.result.columns
+        size = getsizeof(payload) + getsizeof(payload.items)
+        size += sum(_retained_scalar_size(getattr(payload, name), columns[index])
+                    for index, name in ((1, "visited"), (2, "next_cursor"),
+                                        (3, "pass_exhausted")))
+        base = get_statement("E15").result.columns[:39]
+        for item in payload.items:
+            size += getsizeof(item) + getsizeof(None)
+            size += sum(_retained_scalar_size(getattr(item, col.name), col) for col in base)
+        return size
     if request.statement is get_statement("E33"):
         from .observations import SchemaStatus
         from .rows import _decode_native_readiness_result_raw

@@ -1108,7 +1108,7 @@ def _statement_shape_raw(statement):
         _reject_validation()
     from . import catalog
 
-    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E31", "E32", "E33")
+    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E13", "E14", "E28", "E31", "E32", "E33")
                          if statement is catalog.get_statement(key)), None)
     if expected_key is None:
         _reject_validation()
@@ -1309,6 +1309,19 @@ def _constraint_raw(value, code):
         if value is not None:
             _identifier_raw(_decode_utf8(_bytes_raw(value), _reject=_reject_validation))
         return
+    if code.value == "namespace":
+        _identifier_raw(_decode_utf8(_bytes_raw(value), _reject=_reject_validation))
+        return
+    if code.value == "kind":
+        if type(value) is not str or value not in ("job", "inbox"):
+            _reject_validation()
+        return
+    if code.value == "limit":
+        _integer_raw(value, 1, 256)
+        return
+    if code.value == "discovery_budget":
+        _integer_raw(value, 1, 4096)
+        return
     if code.value == "required_profile":
         if type(value) is not str or value not in ("events", "workers"):
             _reject_validation()
@@ -1337,7 +1350,7 @@ def _constraint_raw(value, code):
         if type(value) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,255}", value) is None:
             _reject_validation()
         return
-    if code.value not in ("work_id", "token", "dispatch_id", "request_evidence",
+    if code.value not in ("work_id", "work_cursor", "token", "dispatch_id", "request_evidence",
                           "guard_id", "root_xid", "result", "failed_business_root",
                           "retry_at", "evidence", "operation_id", "binding"):
         _reject_validation()

@@ -60,7 +60,7 @@ def _decode_columns_core(columns, values, *, _reject=None):
     if (
         _reject is not None
         and not any(columns is get_statement(key).result.columns
-                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E31", "E32", "E33"))
+                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E13", "E14", "E28", "E31", "E32", "E33"))
     ):
         _reject_scalar(_reject)
     if (
@@ -723,3 +723,72 @@ def _decode_native_readiness_result_raw(request, rows, /):
             object.__setattr__(status, column.name, value)
         result.append(status)
     return tuple(result)
+
+def _validate_recovery_page_raw(request, page, /):
+    """Revalidate the ORIGINAL full retained graph; never normalize a replacement."""
+    from .managed_lifecycle import _retained_scalar_size
+    from .recovery_profile import _validate_recovery_request
+
+    limit = _validate_recovery_request(request)
+    if type(page) is not O.ScanPage:
+        _reject_validation()
+    # Exact scalar preflight before comparisons, UUID properties or size hooks.
+    columns = get_statement("E13").result.columns
+    _retained_scalar_size(page.visited, columns[1])
+    _retained_scalar_size(page.next_cursor, columns[2])
+    _retained_scalar_size(page.pass_exhausted, columns[3])
+    if (type(page.items) is not tuple or len(page.items) > limit
+            or type(page.visited) is not int or not 0 <= page.visited <= request.parameters[4]
+            or type(page.pass_exhausted) is not bool or len(page.items) > page.visited):
+        _reject_validation()
+    incoming = request.parameters[3]
+    cursor = page.next_cursor
+    if page.visited == 0:
+        if page.items or cursor != incoming:
+            _reject_validation()
+    elif cursor is None or (incoming is not None and cursor.int <= incoming.int):
+        _reject_validation()
+    if page.pass_exhausted and (page.visited >= request.parameters[4] or len(page.items) >= limit):
+        _reject_validation()
+    prior = incoming
+    base = get_statement("E15").result.columns[:39]
+    for item in page.items:
+        if type(item) is not O.WorkObservation:
+            _reject_validation()
+        for column in base:
+            _retained_scalar_size(getattr(item, column.name), column)
+        if item.resolution is not None:
+            _reject_validation()
+        O._validate_work_observation_raw(item)
+        if (item.kind != request.parameters[1] or item.namespace != request.parameters[0]
+                or item.state not in ("queued", "expired", "failed", "cancelled", "held")
+                or cursor is None or item.work_id.int > cursor.int
+                or (prior is not None and item.work_id.int <= prior.int)):
+            _reject_validation()
+        prior = item.work_id
+
+
+def _decode_native_recovery_result_raw(request, rows, /):
+    """Complete canonical header + Work56 page, under the caller's existing D."""
+    from .recovery_profile import _validate_recovery_request
+
+    limit = _validate_recovery_request(request)
+    if type(rows) is not tuple or not 1 <= len(rows) <= limit + 1:
+        _reject_validation()
+    columns = request.statement.result.columns
+    header = _decode_columns_raw(columns, rows[0])
+    if (header[0] != "header" or header[1] is None or header[3] is None
+            or any(value is not None for value in header[4:])):
+        _reject_validation()
+    items = [None] * (len(rows) - 1)
+    for index in range(1, len(rows)):
+        row = _decode_columns_raw(columns, rows[index])
+        if (row[0] != "item" or any(value is not None for value in row[1:4])
+                or row[43] is not False or any(value is not None for value in row[44:])):
+            _reject_validation()
+        items[index - 1] = _decode_work_observation_raw(row[4:])
+    page = O._scan_page_raw(items=tuple(items), visited=header[1],
+                           next_cursor=header[2], pass_exhausted=header[3])
+    items = None
+    _validate_recovery_page_raw(request, page)
+    return page

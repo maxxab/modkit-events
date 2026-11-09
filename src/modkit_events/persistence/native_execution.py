@@ -144,6 +144,56 @@ def prepare_resolution(
     return preparation
 
 
+def prepare_recovery(
+    execution, /, *, execution_ledger, capacity, namespace, kind, limit,
+    scan_after, discovery_budget,
+):
+    """Reserve generic M before creating the complete five-input request."""
+    from .recovery_profile import _recovery_preparation_min
+
+    flag = _managed._context(execution_ledger)
+    _managed._require_handles(flag, execution)
+    _managed._size(capacity, flag)
+    try:
+        minimum = _recovery_preparation_min()
+    except _ValidationReject:
+        _fail(ErrorCode.PROFILE_REJECTED, unconfirmed=flag)
+    if capacity < minimum:
+        _fail(ErrorCode.CAPACITY_EXCEEDED, unconfirmed=flag)
+    with _managed._construction(flag) as paid:
+        preparation, code = _managed._reserve_preparation_paid(
+            execution, capacity, execution_ledger, paid
+        )
+        reserved = code is None
+        request = None
+        if reserved:
+            try:
+                request = _freeze_request_raw(
+                    get_statement("E13"),
+                    (namespace, kind, limit, scan_after, discovery_budget),
+                    context=_return_context_raw(),
+                )
+            except _ValidationReject as error:
+                if type(error) is not _ValidationReject:
+                    raise
+                code = ErrorCode.LOCAL_INVALID_ARGUMENT
+            if code is None:
+                code = _managed._set_preparation_paid(
+                    preparation, request, execution_ledger, paid, unreturned=True
+                )
+        request = None
+        if code is not None:
+            if reserved:
+                cleanup_code = _managed._release_preparation_paid(
+                    preparation, execution_ledger, paid, unreturned=True
+                )
+                _managed._reject(cleanup_code, flag)
+            preparation = None
+    _managed._reject(code, flag)
+    return preparation
+
+
+
 def prepare_readiness(
     execution, required_profile: str, expectation: ReadinessExpectation, /, *,
     execution_ledger, capacity: int = 4096,
@@ -218,7 +268,12 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         _invalid()
     limit = 1
     acquisition = operation is not None and request.statement.key == "W05"
+    recovery = operation is None and request.statement is get_statement("E13")
     readiness = operation is None and request.statement is get_statement("E33")
+    if recovery:
+        from .recovery_profile import _validate_recovery_request
+
+        limit = _validate_recovery_request(request) + 1
     if readiness:
         limit = 1 if request.parameters[0] == "events" else 2
     if operation is not None:
@@ -241,7 +296,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         type(count) is not int
         or not 0 <= count <= limit
         or (descriptor.cardinality is CardinalityKind.EXACT_ONE and count != 1)
-        or (acquisition and count == 0)
+        or ((acquisition or recovery) and count == 0)
         or (readiness and count != limit)
     ):
         _invalid()
@@ -265,7 +320,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     page_payload_bytes = 0
     previous_work_id = None
     completion = operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
-    accumulator = [None] * count if operation is not None or completion or readiness else None
+    accumulator = [None] * count if operation is not None or completion or readiness or recovery else None
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
         if type(cap) is not bytes or cap != b"\x01":
@@ -319,7 +374,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
                     ):
                         _invalid()
                     previous_work_id = work_id
-            if operation is not None or completion or readiness:
+            if operation is not None or completion or readiness or recovery:
                 accumulator[row_index] = decoded
             else:
                 value = (
@@ -334,6 +389,17 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         copied = decoded = None
     if cursor.nextset() is not None:
         _invalid()
+    if recovery:
+        from .rows import _decode_native_recovery_result_raw
+
+        rows = tuple(accumulator)
+        accumulator = None
+        try:
+            value = _decode_native_recovery_result_raw(request, rows)
+        except _ValidationReject as error:
+            if type(error) is not _ValidationReject:
+                raise
+            _invalid()
     if readiness:
         rows = tuple(accumulator)
         accumulator = None
@@ -403,6 +469,13 @@ def execute(ticket, result, /, *, execution_ledger):
                 max_page_payload_bytes = _managed._operation_max_page_payload_bytes(
                     ticket, execution_ledger, reservation=paid
                 )
+            if operation is None and request.statement is get_statement("E13"):
+                from .recovery_profile import _verify_driver
+
+                try:
+                    _verify_driver()
+                except _ValidationReject:
+                    _fail(ErrorCode.PROFILE_REJECTED, unconfirmed=True)
             actual, original = _native._borrow(ticket, execution_ledger)
             if (
                 psycopg.__version__ != "3.3.8"
