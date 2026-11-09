@@ -40,21 +40,27 @@
 - preserve metadata in installed Events test staging (`e5165c2de6be`)
 - **persistence:** preserve decorated callable types (`b3f401c3bbed`)
 - **sql:** materialize bounded replay before validation (`e97efff4dc4b`)
+- **events:** preserve failure disposition when diagnostics raise (`ba99eedece76`)
+- **events:** match grant attestation to declared table columns (`8d8396d35d5c`)
 
 ### Documentation
 
 - clarify one-way Events and Workers dependency (`956f1d74e24e`)
 - regenerate changelog after audit readers (`39132b145833`)
 - record bounded native qualification (`5927d9e741ad`)
+- **events:** reconcile qualification evidence and current migration pins (`4a633e6e8e4f`)
+- **events:** record exact Git recovery after host restart (`cd03f000d4f1`)
 
 ### Testing
 
 - separate Redis claim exclusivity from lease expiry (`4d8bd2531165`)
+- **events:** restore required conformance delivery files (`56f88bb389be`)
 
 ### Build System
 
 - add portable development standards tooling (`90afb2915c3e`)
 - verify immutable release artifacts (`b1624505d2b7`)
+- **events:** require the reviewed complete distribution inventory (`645c96085652`)
 
 ### CI/CD
 
@@ -69,3 +75,5 @@
 - import unqualified Events persistence baseline (`86244add88b9`)
 - import unqualified Events release policy baseline (`432a8e7635a8`)
 - **sql:** preserve unqualified initial migration baseline (`5a45c54a4acb`)
+- checkpoint reviewed native recovery (`eb782777dd54`)
+- preserve installation closure checkpoint (`ad1f3cf8f85e`)
