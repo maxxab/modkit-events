@@ -821,19 +821,44 @@ class PhysicalArchiveTests(unittest.TestCase):
 
 
 class InstalledWheelHarnessTests(unittest.TestCase):
-    def test_staged_tests_keep_project_metadata_without_checkout_source(self):
+    def test_staged_tests_keep_selected_closure_without_checkout_source(self):
         spec = importlib.util.spec_from_file_location(
             "check_wheel_staging_test", SCRIPTS / "check_wheel.py"
         )
         harness = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(harness)
+        # Literal installed-behavior contract; do not learn it from harness constants.
+        base = {
+            "test_core.py",
+            "test_consumer.py",
+            "test_outbox.py",
+            "test_isolation.py",
+            "test_contracts.py",
+            "test_contracts_compatibility.py",
+            "test_contracts_delivery.py",
+            "test_contracts_exports.py",
+            "test_contracts_subscriptions.py",
+            "test_batch_publication.py",
+            "test_persistence_contracts.py",
+            "test_persistence_boundaries.py",
+            "test_catalog_contract.py",
+            "test_native_binary_transport.py",
+            "test_resource_cleanup_failure.py",
+        }
+        adapters = {
+            "test_contracts_pydantic.py",
+            "test_sqlalchemy.py",
+            "test_redis_boundaries.py",
+            "test_legacy_failure_reporting.py",
+        }
         with tempfile.TemporaryDirectory(prefix="modkit-staging-source-") as directory:
             root = Path(directory)
             for name in ("tests", "examples", "scripts", "src"):
                 (root / name).mkdir()
-            metadata = (SCRIPTS.parent / "pyproject.toml").read_bytes()
-            (root / "pyproject.toml").write_bytes(metadata)
-            (root / "tests/test_fixture.py").write_text("def test_fixture(): pass\n")
+            (root / "pyproject.toml").write_bytes((SCRIPTS.parent / "pyproject.toml").read_bytes())
+            for name in base | adapters:
+                (root / "tests" / name).write_text("# inert " + name + "\n")
+            (root / "tests/test_source_only.py").write_text("raise AssertionError\n")
             (root / "examples/sample_app.py").write_text("pass\n")
             (root / "scripts/check_installation.py").write_text("pass\n")
             (root / "src/must_not_be_copied.py").write_text("raise AssertionError\n")
@@ -842,12 +867,36 @@ class InstalledWheelHarnessTests(unittest.TestCase):
             staged_runs = []
 
             def observe_command(command, *, cwd, env, check):
-                if command[1:3] == ["-m", "pytest"]:
+                self.assertEqual(command[1:3], ["-I", "-B"])
+                self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
+                self.assertNotIn("PYTHONPATH", env)
+                self.assertTrue(check)
+                if command[3:5] == ["-m", "pytest"]:
                     staged = Path(cwd)
-                    self.assertTrue((staged / "pyproject.toml").is_file())
-                    self.assertEqual((staged / "pyproject.toml").read_bytes(), metadata)
+                    expected = base | (adapters if staged_runs else set())
+                    self.assertFalse((staged / "pyproject.toml").exists())
                     self.assertFalse((staged / "src").exists())
-                    self.assertTrue((staged / "tests/test_fixture.py").is_file())
+                    self.assertFalse((staged / "examples").exists())
+                    self.assertEqual({p.name for p in (staged / "tests").iterdir()}, expected)
+                    for name in expected:
+                        self.assertEqual(
+                            (staged / "tests" / name).read_bytes(),
+                            (root / "tests" / name).read_bytes(),
+                        )
+                    self.assertEqual(
+                        (staged / "pytest.ini").read_text(),
+                        "[pytest]\nasyncio_mode=auto\nasyncio_default_fixture_loop_scope=function\n",
+                    )
+                    self.assertEqual((staged / "sample_app.py").read_text(), "pass\n")
+                    self.assertEqual(
+                        (staged / "scripts/check_installation.py").read_text(), "pass\n"
+                    )
+                    self.assertIn("--junitxml=installed.xml", command)
+                    # The subprocess is mocked: supply its successful finite report.
+                    (staged / "installed.xml").write_text(
+                        '<testsuites><testsuite tests="1" errors="0" failures="0" '
+                        'skipped="0"/></testsuites>'
+                    )
                     staged_runs.append(staged)
 
             with (
