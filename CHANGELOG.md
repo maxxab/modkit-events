@@ -53,12 +53,14 @@
 - **events:** reconcile qualification evidence and current migration pins (`4a633e6e8e4f`)
 - **events:** record exact Git recovery after host restart (`cd03f000d4f1`)
 - **qualification:** record reviewed source and bounded wheel stop (`af287b719c5e`)
+- **qualification:** record audited tools and scoped source evidence (`670dfdbf70e3`)
 
 ### Testing
 
 - separate Redis claim exclusivity from lease expiry (`4d8bd2531165`)
 - **events:** restore required conformance delivery files (`56f88bb389be`)
 - **events:** isolate resource imports from ambient drivers (`c85517b6bde9`)
+- **packaging:** align staged checker fixture with installed closure (`80e701340d9a`)
 
 ### Build System
 
