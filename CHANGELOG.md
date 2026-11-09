@@ -54,6 +54,8 @@
 - **events:** record exact Git recovery after host restart (`cd03f000d4f1`)
 - **qualification:** record reviewed source and bounded wheel stop (`af287b719c5e`)
 - **qualification:** record audited tools and scoped source evidence (`670dfdbf70e3`)
+- **qualification:** record clean installed checks and legacy Redis gate (`71aa673fe492`)
+- **handoff:** preserve unresolved Redis disposal for ownership transfer (`340d6d6981bb`)
 
 ### Testing
 
