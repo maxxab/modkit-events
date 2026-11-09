@@ -60,3 +60,7 @@ handoff requires an acknowledged common reservation before either dispatcher.
 No retry, failed-fixture disposal or new runtime scope is implied by these fixes.
 Evidence: sibling `resume-events-20261109/redis/{runtime.json,execution.log}`,
 `redis-readonly-reconciliation.json` and `restart-coordination.md`.
+
+### Later reconciliation: failed native fixture disposal
+
+The preservation statement above describes the original failure. A separate exact human approval subsequently authorized failed-r3 disposal; Workers completed the8pinned graceful-stop/wait/nonforce-removal/absence commands. Receipt: sibling resume-workers-20261109/native-r3-disposal-completion.json, disposition EXACT_FAILED_FIXTURE_DISCARDED_NOT_QUALIFIED. Predecessor Events independently verified all17saved result/capture hashes (resume-events-20261109/rollover-checkpoint-2/disposal-receipt-verification.json). No SQL replay or successful installation is established; original native attempt and disposal grants are consumed. Redis UNKNOWN is unaffected. No runtime operation was performed by this handoff.
