@@ -32,6 +32,7 @@
 - **persistence:** add verified native failure settlement (`22d6c0706894`)
 - **persistence:** add native uncertainty settlement and lease renewal (`f37f82271e15`)
 - **persistence:** add paid native schema readiness (`4a1118be19cc`)
+- **persistence:** add explicit held work resolution (`076d0eb51eea`)
 
 ### Bug Fixes
 
