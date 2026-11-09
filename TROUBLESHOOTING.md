@@ -108,3 +108,21 @@ scope; no missing-marker fabrication or free-lock/PID-based clearance.
 Evidence: sibling resume-events-20261109/redis8-disposal-v2/{execution-result,
 retained-client-checkpoint-observation}.json and failure-checkpoint/. No terminal
 disposal success is claimed. Events is stopping for coordinated ownership transfer.
+
+### Read-only successor reconciliation: current resource absence
+
+Successor Events v4 completed the independently reviewed exact CID/name/packet
+label queries. The CID and name were absent; the packet-label listing was empty.
+The first recorder stopped because Docker used lowercase `error: no such object`
+rather than its expected capitalization. The bounded continuation preserved the
+first result and ran only the two unattempted commands, never removal again.
+All three queries returned; no retained query client, kill/wait or native attempt
+was introduced. Saved PID836846 was absent at these observation times.
+
+These are current-state observations, not proof of historical removal success or
+no effects. The original claim, timeout captures and UNKNOWN outcome remain.
+Canonical marker `6c0b01a9` is unchanged and UNRESOLVED. No terminal receipt or
+native admission was created. The next boundary is separately reviewed logical
+fence reconciliation with applicable authority, not another disposal attempt.
+Evidence: sibling `resume-events-20261109/redis8-readonly-reconciliation-v1/`
+contains both immutable observation sets and `combined-observation.json`.
