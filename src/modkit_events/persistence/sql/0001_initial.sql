@@ -1,6 +1,6 @@
--- NEW initial schema SOURCE IN PROGRESS. NOT READY TO APPLY.
--- Partial private validators and core records; public functions/grants still pending.
--- Bounded SQL checks do not qualify this complete migration. Application owns transaction.
+-- Events initial schema for explicit owner installation.
+-- Caller owns the transaction; installation requires a matching independently qualified closure.
+-- This source alone does not establish installation or runtime qualification.
 -- Source-only installation preflight. Application must already own the explicit
 -- component transaction and have selected the authorized existing owner role.
 -- This block creates/modifies no role, membership, default ACL or transaction.

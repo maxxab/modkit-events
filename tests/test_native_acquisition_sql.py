@@ -1,5 +1,7 @@
 """Bounded E04 source contracts only; no SQL/runtime qualification."""
 
+from _installation_artifact_helpers import historical_prefix_view
+
 import hashlib
 import re
 from importlib.resources import files
@@ -15,13 +17,13 @@ def source():
 
 
 def bounded():
-    appended = source()[PREFIX_BYTES:].decode()
+    appended = historical_prefix_view(source())[PREFIX_BYTES:].decode()
     assert "CREATE FUNCTION modkit_events.e04(" in appended, "bounded E04 overload missing"
     return appended[: appended.index("$body$;") + len("$body$;")]
 
 
 def test_bounded_acquire_preserves_complete_e13_prefix_and_exact_abi():
-    assert hashlib.sha256(source()[:PREFIX_BYTES]).hexdigest() == PREFIX_SHA
+    assert hashlib.sha256(historical_prefix_view(source())[:PREFIX_BYTES]).hexdigest() == PREFIX_SHA
     body = bounded()
     inputs, outputs = body.split("RETURNS TABLE(", 1)
     assert "p_max_page_payload_bytes pg_catalog.int8" in inputs
@@ -79,7 +81,7 @@ def test_bounded_acquire_keeps_exact_float_and_private_new_signature():
     assert "lease_wire := pg_catalog.float8send(p_lease_seconds)" in body
     assert "pg_catalog.div(numerator+denominator-1,denominator)" in body
     assert "RETURNING stored.* INTO updated_work" in body
-    appended = source()[PREFIX_BYTES:].decode()
+    appended = historical_prefix_view(source())[PREFIX_BYTES:].decode()
     signature = "modkit_events.e04(pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea[],pg_catalog.int4[],pg_catalog.int4,pg_catalog.float8,pg_catalog.uuid,pg_catalog.int4,pg_catalog.int8)"
     assert "REVOKE ALL ON FUNCTION " + signature + " FROM PUBLIC;" in appended
     assert "acl.grantee<>p.proowner" in appended

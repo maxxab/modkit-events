@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "package": "modkit-events",
+  "migrations": [
+    {
+      "component": "events",
+      "version": 1,
+      "resources": [
+        {
+          "path": "events/0001_initial.sql",
+          "sha256": "e01cf1b87f5e71e463393f86450b3abea67a4c710e14737ec1c839be41ae1c2d"
+        },
+        {
+          "path": "events/grants_runtime.sql",
+          "sha256": "5fa56b934f50206172f82bd7c2959b937646aa59cfdcc3dfda259c1fcfe5b0ff"
+        }
+      ],
+      "migration_digest": "650cbd1f333471b7e34214728703bcf022e2a26c6c763b75b33a099624148d60",
+      "depends_on": [],
+      "catalog_contract_id": "modkit-pg-ab-2",
+      "scope_format_id": "MKSC-1",
+      "intent_format_id": "MKPF-1"
+    }
+  ]
+}

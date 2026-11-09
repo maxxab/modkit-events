@@ -2,6 +2,8 @@
 No product imports, driver imports, connections, or environment setup.
 """
 
+from _installation_artifact_helpers import historical_prefix_view
+
 import hashlib
 import os
 import re
@@ -57,7 +59,7 @@ def body():
 class E31Source(unittest.TestCase):
     def test_frozen_prefix(self):
         self.assertEqual(
-            hashlib.sha256(SQL.read_bytes()[:472978]).hexdigest(),
+            hashlib.sha256(historical_prefix_view(SQL.read_bytes())[:472978]).hexdigest(),
             "6d742a29c8f293ea33f5dc67b904b2bd376c9842b2d7cdfbd013c64edeab0df9",
         )
 

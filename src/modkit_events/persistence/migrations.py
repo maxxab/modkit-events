@@ -1,6 +1,6 @@
 """Verified inert SQL resources. Applications own all migration execution.
 
-No production manifest is supplied until the reviewed SQL closure exists.
+Packaged candidates are not installation-qualified without independent evidence.
 Importing this module performs no resource reads or database operations.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from . import _resource_io as _io
 from . import sql as _sql_anchor  # Inert owned package; initializes standard origin metadata.
 
-__all__ = ["MigrationDependency", "SQLResource", "Migration", "manifest", "read_sql"]
+__all__ = ["MigrationDependency", "SQLResource", "Migration", "manifest", "read_sql", "read_owner_receipt"]
 _COMPONENT = "events"
 _PACKAGE = "modkit-events"
 _ANCHOR = "modkit_events.persistence.sql"
@@ -21,6 +21,7 @@ _PATHS = {
 }
 _IDS = ("modkit-pg-ab-2", "MKSC-1", "MKPF-1")
 _MANIFEST_LIMIT = 65536
+_OWNER_RECEIPT_SHA256 = "73900c796f8183edad0f99c9ec0e992780db4bb529a410fa340219219d06cf3d"
 
 
 def _invalid() -> None:
@@ -230,3 +231,24 @@ def read_sql(migration: Migration, resource: SQLResource, /) -> str:
             return raw.decode("utf-8")
         except UnicodeError:
             raise ValueError("invalid migration SQL encoding") from None
+
+
+def read_owner_receipt(events_migration: Migration, /) -> str:
+    """Read the pinned generic owner receipt; never execute or certify installation.
+
+    Always pass the verified Events descriptor, even for a Workers receipt.
+    The caller separately verifies the Workers closure before binding its tuple.
+    """
+    _migration(events_migration)
+    if events_migration.component != _COMPONENT:
+        _invalid()
+    with _io.open_lease(_ANCHOR) as lease:
+        if events_migration not in _manifest(lease):
+            _invalid()
+        raw = lease.read("owner_receipt.sql", limit=4096)
+        if hashlib.sha256(raw).hexdigest() != _OWNER_RECEIPT_SHA256:
+            raise ValueError("owner receipt resource digest mismatch")
+        try:
+            return raw.decode("utf-8")
+        except UnicodeError:
+            raise ValueError("invalid owner receipt SQL encoding") from None

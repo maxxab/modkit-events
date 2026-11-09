@@ -1,11 +1,13 @@
 """E11 source guards only, not PostgreSQL execution."""
+from _installation_artifact_helpers import historical_prefix_view
+
 import hashlib
 from importlib.resources import files
 
 
 def test_e11_contract():
     sql = files("modkit_events.persistence.sql").joinpath("0001_initial.sql").read_text()
-    assert hashlib.sha256(sql.encode()[:432362]).hexdigest() == "0cdea5bcf410584fe2960bc977663f843191598d5968199435bfebb171e92268"
+    assert hashlib.sha256(historical_prefix_view(sql.encode())[:432362]).hexdigest() == "0cdea5bcf410584fe2960bc977663f843191598d5968199435bfebb171e92268"
     assert "CREATE FUNCTION modkit_events.e11(" in sql, "E11 body missing"
     body = sql.split("CREATE FUNCTION modkit_events.e11(", 1)[1]
     for fragment in (

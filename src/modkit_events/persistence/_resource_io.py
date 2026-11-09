@@ -20,7 +20,7 @@ ARCHIVE_LIMIT = 268435456
 DIRECTORY_LIMIT = 16777216
 ENTRY_LIMIT = 65534
 FIELD_LIMIT = 4096
-_NAMES = ('manifest.json', '0001_initial.sql', 'grants_runtime.sql')
+_NAMES = ('manifest.json', '0001_initial.sql', 'grants_runtime.sql', 'owner_receipt.sql')
 _NOTE = 'Migration resource cleanup failed; close outcome is uncertain.'
 
 
@@ -43,7 +43,8 @@ def _large(name=None):
 def _limit(name, limit):
     if type(name) is not str or name not in _NAMES:
         _containment()
-    bound = MANIFEST_LIMIT if name == 'manifest.json' else SQL_LIMIT
+    bound = (MANIFEST_LIMIT if name == 'manifest.json' else
+             4096 if name == 'owner_receipt.sql' else SQL_LIMIT)
     if limit is not None:
         if type(limit) is not int or limit < 0:
             _containment()

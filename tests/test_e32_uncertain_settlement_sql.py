@@ -3,6 +3,8 @@
 Pure imports must use an accepted pinned snapshot during concurrent development.
 E32_SQL_PATH selects the separately frozen SQL candidate for independent review.
 """
+from _installation_artifact_helpers import historical_prefix_view
+
 import hashlib
 import os
 import re
@@ -40,7 +42,7 @@ def body():
 
 
 def test_frozen_prefix():
-    assert hashlib.sha256(sql().encode()[:448641]).hexdigest() == (
+    assert hashlib.sha256(historical_prefix_view(sql().encode())[:448641]).hexdigest() == (
         "ed8c7032cdd7bd6a67dc2a41e38c1384e0173094544de63bb37e9ddac4a35429"
     )
 

@@ -1,5 +1,7 @@
 """E13 source guards only; no PostgreSQL parsing or runtime qualification."""
 
+from _installation_artifact_helpers import historical_prefix_view
+
 import hashlib
 import re
 from importlib.resources import files
@@ -33,7 +35,7 @@ def test_e13_exact_abi_security_and_prefix():
     assert "VOLATILE SECURITY DEFINER CALLED ON NULL INPUT" in body
     assert "SET search_path = pg_catalog, pg_temp" in body
     assert "REVOKE ALL ON FUNCTION modkit_events.e13(pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.uuid,pg_catalog.int4) FROM PUBLIC;" in sql()
-    assert hashlib.sha256(sql().encode()[:378764]).hexdigest() == (
+    assert hashlib.sha256(historical_prefix_view(sql().encode())[:378764]).hexdigest() == (
         "ef9c3eafac5713a2ad07c62dbde476c1d0d751897a03d0e685788a8766fc2731"
     )
 

@@ -329,8 +329,13 @@ python -m ruff format --check src tests examples scripts
 python -m mypy src/modkit_events --ignore-missing-imports
 python -m build
 python -m twine check dist/*
-python scripts/check_wheel.py dist/modkit_events-0.1.0-py3-none-any.whl
+python scripts/check_wheel.py dist/modkit_events-0.2.0-py3-none-any.whl
 ```
+
+Events 0.2.0 is an unpublished local candidate. Build and installed-artifact
+qualification are pending; the command above is not evidence that this wheel
+exists or has passed checks. Native, installation and platform caveats below
+and elsewhere in this document remain in force.
 
 Real Redis tests require a disposable standalone server. Set `MODKIT_REDIS_URL`
 and `MODKIT_REQUIRE_REDIS=1` to make missing service configuration a failure.
@@ -343,3 +348,19 @@ real SQLite and (when configured) Redis tests. Keep hosted CI green for the exac
 release SHA before publication.
 
 The MIT license retains the original source copyright notice.
+
+
+## Explicit PostgreSQL closure candidate
+
+This candidate includes initial/grants descriptors and a separately pinned
+owner-only six-bind receipt template. The inert migrations.read_owner_receipt
+helper always takes the verified Events Migration, even when retrieving the
+shared generic template for separately validated Workers identity. It enforces
+a4096-byte bound and never executes SQL or finalizes transactions.
+
+See [installation responsibilities](docs/installation.md). Matching resources or
+E33 rows do not qualify installation, ACL integrity or business authority.
+Candidates remain **not installation-ready** pending independent artifact and
+restricted-role native qualification. Events0.1.0 versus Workers' Events>=0.2
+requirement remains a separate metadata gate; dependency-ignoring installations
+or checkout imports are not installed-pair evidence.
