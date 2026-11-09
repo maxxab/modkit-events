@@ -28,6 +28,7 @@
 - **persistence:** support bounded native job acquisition (`2b14c34c188e`)
 - **persistence:** add fenced execution failure settlement (`63826c8a2c57`)
 - **persistence:** complete native execution statement bridge (`d3bc1e8b285f`)
+- **persistence:** add uncertain execution settlement (`c18b29b1722d`)
 
 ### Bug Fixes
 
