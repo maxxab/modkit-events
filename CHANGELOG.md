@@ -55,6 +55,7 @@
 
 - separate Redis claim exclusivity from lease expiry (`4d8bd2531165`)
 - **events:** restore required conformance delivery files (`56f88bb389be`)
+- **events:** isolate resource imports from ambient drivers (`c85517b6bde9`)
 
 ### Build System
 
