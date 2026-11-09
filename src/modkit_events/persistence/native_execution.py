@@ -18,13 +18,18 @@ from psycopg.types.uuid import UUIDBinaryDumper
 
 from . import managed_lifecycle as _managed
 from . import native_sync as _native
-from .bindings import _freeze_request_raw, _return_context_raw
+from .bindings import ReadinessExpectation, _freeze_request_raw, _return_context_raw
 from .catalog import CardinalityKind, get_statement
 from .errors import ErrorCode, PersistenceError, _fail, _ValidationReject
 from .native_codec import _decode_binary_transport_row, _selected_sql_descriptor
-from .rows import _decode_native_event_result_raw, _decode_outbox_raw
+from .rows import (
+    _decode_native_event_result_raw,
+    _decode_native_readiness_result_raw,
+    _decode_outbox_raw,
+)
 
 _PREPARATION_BYTES = 1024
+READINESS_RESULT_CAPACITY = 16384
 _FIXED_WIDTHS = {16: 1, 5069: 8, 23: 4, 2950: 16, 20: 8, 1184: 8, 17: -1}
 # Exact canonical W03 positions, counted as occurrences even when bytes alias.
 _W03_LARGE_COLUMNS = (
@@ -96,6 +101,51 @@ def prepare(
     return preparation
 
 
+def prepare_readiness(
+    execution, required_profile: str, expectation: ReadinessExpectation, /, *,
+    execution_ledger, capacity: int = 4096,
+):
+    """Retain pinned E33 expectations only after reserving their paid A frame."""
+    flag = _managed._context(execution_ledger)
+    _managed._require_handles(flag, execution)
+    _managed._size(capacity, flag)
+    with _managed._construction(flag) as paid:
+        preparation, code = _managed._reserve_preparation_paid(
+            execution, capacity, execution_ledger, paid
+        )
+        reserved = code is None
+        request = None
+        if reserved:
+            try:
+                request = _freeze_request_raw(
+                    get_statement("E33"),
+                    (required_profile,),
+                    context=_return_context_raw(readiness=expectation),
+                )
+            except _ValidationReject as error:
+                if type(error) is not _ValidationReject:
+                    raise
+                code = ErrorCode.LOCAL_INVALID_ARGUMENT
+            if code is None:
+                code = _managed._set_preparation_paid(
+                    preparation, request, execution_ledger, paid, unreturned=True
+                )
+        # Known rejection cleanup is still under this reservation. Never
+        # refund backing while the local request or helper's outgoing survives.
+        request = None
+        if code is not None:
+            if reserved:
+                cleanup_code = _managed._release_preparation_paid(
+                    preparation, execution_ledger, paid, unreturned=True
+                )
+                # Failure to release this exact unreturned A is unexpected;
+                # contain it instead of converting an uncertain drop to success.
+                _managed._reject(cleanup_code, flag)
+            preparation = None
+    _managed._reject(code, flag)
+    return preparation
+
+
 def prepare_component(
     execution, operation, logical_request, /, *, execution_ledger, max_page_payload_bytes=None
 ):
@@ -125,6 +175,9 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         _invalid()
     limit = 1
     acquisition = operation is not None and request.statement.key == "W05"
+    readiness = operation is None and request.statement is get_statement("E33")
+    if readiness:
+        limit = 1 if request.parameters[0] == "events" else 2
     if operation is not None:
         from .native_profile import _result_row_limit
 
@@ -146,6 +199,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         or not 0 <= count <= limit
         or (descriptor.cardinality is CardinalityKind.EXACT_ONE and count != 1)
         or (acquisition and count == 0)
+        or (readiness and count != limit)
     ):
         _invalid()
     tag = "SELECT " + str(count)
@@ -168,7 +222,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     page_payload_bytes = 0
     previous_work_id = None
     completion = operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32")
-    accumulator = [None] * count if operation is not None or completion else None
+    accumulator = [None] * count if operation is not None or completion or readiness else None
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
         if type(cap) is not bytes or cap != b"\x01":
@@ -222,7 +276,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
                     ):
                         _invalid()
                     previous_work_id = work_id
-            if operation is not None or completion:
+            if operation is not None or completion or readiness:
                 accumulator[row_index] = decoded
             else:
                 value = (
@@ -237,6 +291,17 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         copied = decoded = None
     if cursor.nextset() is not None:
         _invalid()
+    if readiness:
+        rows = tuple(accumulator)
+        accumulator = None
+        try:
+            value = _decode_native_readiness_result_raw(request, rows)
+        except _ValidationReject as error:
+            if type(error) is not _ValidationReject:
+                raise
+            _invalid()
+        if value != request.context.readiness.components:
+            _fail(ErrorCode.SCHEMA_MISMATCH, unconfirmed=True)
     if completion:
         rows = tuple(accumulator)
         accumulator = None

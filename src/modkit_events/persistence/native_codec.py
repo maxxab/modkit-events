@@ -34,6 +34,52 @@ class _SqlDescriptor:
     max_admitted_cell_payload_bytes: int
 
 
+
+_E33_SQL = b"""WITH source AS MATERIALIZED (
+    SELECT s.component, s.version, s.migration_digest, s.catalog_contract_id,
+           s.scope_format_id, s.intent_format_id
+    FROM modkit_events.e33($1::pg_catalog.text) AS s
+), checked AS (
+    SELECT s.*, (
+        (s.component IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.component, 'UTF8')) OPERATOR(pg_catalog.<=) 7)
+        AND s.version IS NOT NULL
+        AND (s.migration_digest IS NOT NULL AND pg_catalog.octet_length(s.migration_digest) OPERATOR(pg_catalog.<=) 32)
+        AND (s.catalog_contract_id IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.catalog_contract_id, 'UTF8')) OPERATOR(pg_catalog.<=) 256)
+        AND (s.scope_format_id IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.scope_format_id, 'UTF8')) OPERATOR(pg_catalog.<=) 256)
+        AND (s.intent_format_id IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.intent_format_id, 'UTF8')) OPERATOR(pg_catalog.<=) 256)
+    ) IS TRUE AS cap_ok
+    FROM source AS s
+)
+SELECT c.cap_ok,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.component, 'UTF8') ELSE NULL::pg_catalog.bytea END AS component,
+       c.version,
+       CASE WHEN c.cap_ok THEN c.migration_digest ELSE NULL::pg_catalog.bytea END AS migration_digest,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.catalog_contract_id, 'UTF8') ELSE NULL::pg_catalog.bytea END AS catalog_contract_id,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.scope_format_id, 'UTF8') ELSE NULL::pg_catalog.bytea END AS scope_format_id,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.intent_format_id, 'UTF8') ELSE NULL::pg_catalog.bytea END AS intent_format_id
+FROM checked AS c
+ORDER BY CASE WHEN pg_catalog.convert_to(c.component, 'UTF8') OPERATOR(pg_catalog.=) pg_catalog.convert_to('events', 'UTF8') THEN 0 ELSE 1 END
+LIMIT 3"""
+_E33_COLUMNS = (
+    _TransportColumn(name="cap_ok", wire_type=WireType.BOOL, oid=16,
+                     nullable=False, max_payload_bytes=1),
+    _TransportColumn(name="component", wire_type=WireType.BYTEA, oid=17,
+                     nullable=False, max_payload_bytes=7),
+    _TransportColumn(name="version", wire_type=WireType.INT4, oid=23,
+                     nullable=False, max_payload_bytes=4),
+    _TransportColumn(name="migration_digest", wire_type=WireType.BYTEA, oid=17,
+                     nullable=False, max_payload_bytes=32),
+    *tuple(_TransportColumn(name=name, wire_type=WireType.BYTEA, oid=17,
+                           nullable=False, max_payload_bytes=256)
+           for name in ("catalog_contract_id", "scope_format_id", "intent_format_id")),
+)
+_E33 = _SqlDescriptor(
+    sql=_E33_SQL, parameter_casts=("pg_catalog.text",),
+    canonical_columns=get_statement("E33").result.columns,
+    transport_columns=_E33_COLUMNS, cardinality=CardinalityKind.READINESS,
+    sentinel_limit=3, max_admitted_cell_payload_bytes=812,
+)
+
 _E05_SQL = b"""WITH source AS MATERIALIZED (
     SELECT s.lease_until
     FROM modkit_events.e05($1::pg_catalog.uuid, $2::pg_catalog.uuid, $3::pg_catalog.int8, $4::pg_catalog.int4, $5::pg_catalog.int4, $6::pg_catalog.float8) AS s
@@ -2073,6 +2119,8 @@ def _selected_sql_descriptor(
     _statement_shape_raw(spec)
     if max_page_payload_bytes is not None:
         _reject_validation()
+    if spec is get_statement("E33"):
+        return _E33
     if spec is get_statement("E05"):
         return _E05
     if spec is get_statement("E14"):

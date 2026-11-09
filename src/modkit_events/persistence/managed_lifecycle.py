@@ -442,6 +442,13 @@ def _preparation_size(payload, operation=None, *, max_page_payload_bytes=None):
         + getsizeof(payload.context)
         + getsizeof(payload.context.expected)
     )
+    if payload.statement is get_statement("E33"):
+        readiness = payload.context.readiness
+        size += getsizeof(readiness) + getsizeof(readiness.components)
+        for status in readiness.components:
+            size += getsizeof(status)
+            size += sum(scalar_size(getattr(status, column.name))
+                        for column in payload.statement.result.columns)
     # Count every retained occurrence, even if parameter/context fields alias.
     for expected in payload.context.expected:
         size += getsizeof(expected)
@@ -1119,6 +1126,35 @@ def _typed_result_size(request, payload):
     from .observations import GuardRow, SettlementObservation
     from .rows import _decode_native_event_result_raw
 
+    if request.statement is get_statement("E33"):
+        from .observations import SchemaStatus
+        from .rows import _decode_native_readiness_result_raw
+
+        _freeze_parameters(request.statement, request.parameters, request.context,
+                           _reject=_reject_validation)
+        count = 1 if request.parameters[0] == "events" else 2
+        if type(payload) is not tuple or len(payload) != count:
+            _reject_validation()
+        columns = request.statement.result.columns
+        rows = []
+        size = getsizeof(payload)
+        for status in payload:
+            if type(status) is not SchemaStatus:
+                _reject_validation()
+            try:
+                values = tuple(getattr(status, column.name) for column in columns)
+            except AttributeError as error:
+                if type(error) is not AttributeError:
+                    raise
+                _reject_validation()
+            size += getsizeof(status) + sum(
+                _retained_scalar_size(value, column) for value, column in zip(values, columns)
+            )
+            rows.append(values)
+        decoded = _decode_native_readiness_result_raw(request, tuple(rows))
+        if decoded != request.context.readiness.components:
+            _reject_validation()
+        return size
     if request.statement is get_statement("E32"):
         if type(payload) is not SettlementObservation:
             _reject_validation()

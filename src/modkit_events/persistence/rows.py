@@ -60,7 +60,7 @@ def _decode_columns_core(columns, values, *, _reject=None):
     if (
         _reject is not None
         and not any(columns is get_statement(key).result.columns
-                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32"))
+                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32", "E33"))
     ):
         _reject_scalar(_reject)
     if (
@@ -688,3 +688,29 @@ def _decode_native_event_result_raw(request, rows, /):
     ):
         _reject_validation()
     return result
+
+
+def _decode_native_readiness_result_raw(request, rows, /):
+    """Validate a complete E33 observation without nested public boundaries."""
+    if type(request) is not FrozenRequest or request.statement is not get_statement("E33"):
+        _reject_validation()
+    _freeze_parameters(request.statement, request.parameters, request.context,
+                       _reject=_reject_validation)
+    expected = ("events",) if request.parameters[0] == "events" else ("events", "workers")
+    if type(rows) is not tuple or len(rows) != len(expected):
+        _reject_validation()
+    result = []
+    for component, row in zip(expected, rows):
+        values = _decode_columns_raw(request.statement.result.columns, row)
+        if values[0] != component:
+            _reject_validation()
+        _integer_raw(values[1], 1, 2147483647)
+        if len(values[2]) != 32:
+            _reject_validation()
+        for identifier in values[3:]:
+            _identifier_raw(identifier)
+        status = object.__new__(O.SchemaStatus)
+        for column, value in zip(request.statement.result.columns, values):
+            object.__setattr__(status, column.name, value)
+        result.append(status)
+    return tuple(result)

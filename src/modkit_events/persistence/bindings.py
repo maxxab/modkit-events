@@ -1108,7 +1108,7 @@ def _statement_shape_raw(statement):
         _reject_validation()
     from . import catalog
 
-    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32")
+    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32", "E33")
                          if statement is catalog.get_statement(key)), None)
     if expected_key is None:
         _reject_validation()
@@ -1143,8 +1143,46 @@ def _validate_empty_context_fields(expected, readiness, *, _reject):
         _reject_scalar(_reject)
 
 
+def _validate_readiness_expectation_raw(expectation, /):
+    """Validate the exact retained E33 graph without public constructors."""
+    from .observations import SchemaStatus
+
+    if type(expectation) is not ReadinessExpectation:
+        _reject_validation()
+    try:
+        components = expectation.components
+        if type(components) is not tuple or not 1 <= len(components) <= 2:
+            _reject_validation()
+        for value in components:
+            if type(value) is not SchemaStatus:
+                _reject_validation()
+            if type(value.component) is not str or value.component not in ("events", "workers"):
+                _reject_validation()
+            _integer_raw(value.version, 1, 2147483647)
+            if type(value.migration_digest) is not bytes or len(value.migration_digest) != 32:
+                _reject_validation()
+            identifiers = (value.catalog_contract_id, value.scope_format_id, value.intent_format_id)
+            for identifier in identifiers:
+                _identifier_raw(identifier)
+            if identifiers != ("modkit-pg-ab-2", "MKSC-1", "MKPF-1"):
+                _reject_validation()
+        if tuple(value.component for value in components) not in (
+            ("events",), ("events", "workers")
+        ):
+            _reject_validation()
+    except AttributeError as error:
+        if type(error) is not AttributeError:
+            raise
+        _reject_validation()
+
+
 def _validate_return_context(context, *, _reject=None):
     if _reject is not None:
+        if context.readiness is not None:
+            if type(context.expected) is not tuple or context.expected:
+                _reject_scalar(_reject)
+            _validate_readiness_expectation_raw(context.readiness)
+            return
         if (
             type(context.expected) is not tuple
             or len(context.expected) > 1
@@ -1270,6 +1308,10 @@ def _constraint_raw(value, code):
                 ConstraintId.PROVIDER_KEY_REFERENCE):
         if value is not None:
             _identifier_raw(_decode_utf8(_bytes_raw(value), _reject=_reject_validation))
+        return
+    if code.value == "required_profile":
+        if type(value) is not str or value not in ("events", "workers"):
+            _reject_validation()
         return
     bounds = {"ownership_revision": (1, 2**63 - 1), "cycle": (1, 1),
               "expected_attempt": (0, 1000)}

@@ -7824,3 +7824,35 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e32(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.xid8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea) FROM PUBLIC;
+
+-- E33 observes installed receipts only. No installation or readiness certification.
+CREATE FUNCTION modkit_events.e33(p_required_profile pg_catalog.text)
+RETURNS TABLE (
+    component pg_catalog.text,
+    version pg_catalog.int4,
+    migration_digest pg_catalog.bytea,
+    catalog_contract_id pg_catalog.text,
+    scope_format_id pg_catalog.text,
+    intent_format_id pg_catalog.text
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $body$
+BEGIN
+    IF p_required_profile IS NULL OR pg_catalog.convert_to(p_required_profile,'UTF8')
+       NOT IN (pg_catalog.convert_to('events','UTF8'),pg_catalog.convert_to('workers','UTF8')) THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid readiness profile';
+    END IF;
+    RETURN QUERY
+    SELECT s.component,s.version,s.migration_digest,s.catalog_contract_id,
+           s.scope_format_id,s.intent_format_id
+      FROM modkit_events.schema_versions AS s
+      WHERE pg_catalog.convert_to(s.component,'UTF8')=pg_catalog.convert_to('events','UTF8')
+         OR (pg_catalog.convert_to(p_required_profile,'UTF8')=pg_catalog.convert_to('workers','UTF8')
+             AND pg_catalog.convert_to(s.component,'UTF8')=pg_catalog.convert_to('workers','UTF8'))
+      ORDER BY CASE WHEN pg_catalog.convert_to(s.component,'UTF8')=pg_catalog.convert_to('events','UTF8')
+                    THEN 0 ELSE 1 END
+      LIMIT 3;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e33(pg_catalog.text) FROM PUBLIC;
