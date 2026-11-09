@@ -26,6 +26,7 @@
 - **persistence:** support native job identity lookup (`0a39e72d619b`)
 - **persistence:** add bounded work recovery (`c66e48c8de62`)
 - **persistence:** support bounded native job acquisition (`2b14c34c188e`)
+- **persistence:** add fenced execution failure settlement (`63826c8a2c57`)
 
 ### Bug Fixes
 
