@@ -1,9 +1,9 @@
 """Synchronous pure NEW Scope controls; no package/driver imports or SQL proof."""
 
 import importlib.util
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/modkit_events/persistence/scope.py"
 scope_module = None

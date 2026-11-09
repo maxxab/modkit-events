@@ -1,6 +1,7 @@
 """Pure metadata contracts; these tests do not qualify PostgreSQL behavior."""
 
 from dataclasses import FrozenInstanceError
+
 from modkit_events.persistence import catalog as c
 
 

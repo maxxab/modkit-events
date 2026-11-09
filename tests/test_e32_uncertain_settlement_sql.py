@@ -4,14 +4,13 @@ Pure imports must use an accepted pinned snapshot during concurrent development.
 E32_SQL_PATH selects the separately frozen SQL candidate for independent review.
 """
 
-from _installation_artifact_helpers import historical_prefix_view
-
 import hashlib
 import os
 import re
 from pathlib import Path
 
 import pytest
+from _installation_artifact_helpers import historical_prefix_view
 
 from modkit_events.persistence.catalog import get_statement
 

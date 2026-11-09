@@ -139,9 +139,10 @@ def rejects(call):
 
 def test_identity_admission_and_intent():
     assert hasattr(M, "AdmissionInput"), "AdmissionInput is not implemented"
-    from modkit_events.persistence.scope import Scope, canonical_scope, encode_scope_fields
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
+
+    from modkit_events.persistence.scope import Scope, canonical_scope, encode_scope_fields
 
     scope = Scope("app", None, "owner\0")
     app, tenant, owner = encode_scope_fields(scope)
@@ -213,8 +214,8 @@ def test_identity_admission_and_intent():
 
 def test_fence_cursor_capability_validation():
     assert hasattr(M, "Fence"), "Fence is not implemented"
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
 
     args = dict(
         work_id=UUID(int=1), token=UUID(int=2), ownership_revision=1, cycle=1, expected_attempt=0
@@ -323,9 +324,10 @@ def test_replay_collection_budget_prevents_excess_decode():
 
 
 def _work_observation_fields():
-    from modkit_events.persistence.scope import Scope, canonical_scope, encode_scope_fields
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
+
+    from modkit_events.persistence.scope import Scope, canonical_scope, encode_scope_fields
 
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scope = Scope("app")
@@ -527,8 +529,9 @@ def test_replay_depth_rejects_before_leaf_conversion():
 
 
 def test_exhausted_claim_and_cancelled_terminal_rules():
-    from uuid import UUID
     from hashlib import sha256
+    from uuid import UUID
+
     from modkit_events.persistence.catalog import MUTATION_OPERATION_KINDS
 
     fields = _work_observation_fields()
@@ -594,6 +597,7 @@ def test_exhausted_claim_and_cancelled_terminal_rules():
 
 def test_discriminator_equality_hooks_and_tampering():
     from uuid import UUID
+
     from modkit_events.persistence.catalog import MUTATION_OPERATION_KINDS
 
     calls = []
@@ -688,8 +692,9 @@ def test_predispatch_cancelled_states_rejected():
 
 def test_neutral_factory_scalar_and_snapshot():
     assert hasattr(B, "freeze_request"), "neutral factory not implemented"
-    from modkit_events.persistence.catalog import get_statement, WireType
     from uuid import UUID
+
+    from modkit_events.persistence.catalog import WireType, get_statement
 
     context = B.ReturnContext(expected=(), readiness=None)
     request = B.freeze_request(get_statement("E14"), (), context=context)
@@ -719,8 +724,9 @@ def test_neutral_factory_scalar_and_snapshot():
 
 def test_factory_context_and_constraints():
     assert hasattr(B, "freeze_request"), "neutral factory not implemented"
-    from modkit_events.persistence.catalog import get_statement
     from uuid import UUID
+
+    from modkit_events.persistence.catalog import get_statement
 
     empty = B.ReturnContext(expected=(), readiness=None)
     rejects(
@@ -765,8 +771,9 @@ def _work_wire(fields=None):
 
 def test_work_row_scalar_and_request_coupling():
     assert R is not None, "rows source not implemented"
-    from modkit_events.persistence.catalog import get_statement, WireType
     from uuid import UUID
+
+    from modkit_events.persistence.catalog import WireType, get_statement
 
     row = _work_wire()
     request = B.freeze_request(
@@ -788,8 +795,9 @@ def test_work_row_scalar_and_request_coupling():
 
 def test_scan_header_and_scalar_result_guards():
     assert R is not None, "rows source not implemented"
-    from modkit_events.persistence.catalog import get_statement
     from uuid import UUID
+
+    from modkit_events.persistence.catalog import get_statement
 
     empty = B.ReturnContext(expected=(), readiness=None)
     request = B.freeze_request(
@@ -901,8 +909,9 @@ def _round2_reject(fn, observed=True, code=None):
 
 def test_round2_actual_sequence_snapshots():
     from collections.abc import Sequence
-    from modkit_events.persistence.catalog import get_statement
     from uuid import UUID
+
+    from modkit_events.persistence.catalog import get_statement
 
     class Input(Sequence):
         def __init__(self, values, declared):
@@ -932,6 +941,7 @@ def test_round2_actual_sequence_snapshots():
 
 def test_round2_bounded_inner_rows():
     from collections.abc import Sequence
+
     from modkit_events.persistence.catalog import get_statement
 
     class Input(Sequence):
@@ -962,8 +972,8 @@ def test_round2_bounded_inner_rows():
 
 
 def _round2_outbox(state, revision):
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
 
     raw = b'{"event_id":"id","name":"event","schema_version":1,"payload":{},"metadata":{}}'
     event = B.validate_event_replay(raw)
@@ -993,7 +1003,10 @@ def test_round2_owned_outbox_revision():
         data = _round2_outbox(state, 0)
         _round2_reject(lambda: O.OutboxRow(**data))
         request = B.freeze_request(get_statement("E28"), [b"id"], context=context)
-        row = lambda: tuple(data[c.name] for c in get_statement("E28").result.columns)
+
+        def row():
+            return tuple(data[c.name] for c in get_statement("E28").result.columns)
+
         _round2_reject(lambda: R.decode_event_rows(request, [row()]))
         data["ownership_revision"] = 1
         assert O.OutboxRow(**data).ownership_revision == 1
@@ -1048,8 +1061,9 @@ def test_round2_readiness_classification():
 
 
 def test_round2_outbox_scan_whole_page():
-    from modkit_events.persistence.catalog import get_statement
     from hashlib import sha256
+
+    from modkit_events.persistence.catalog import get_statement
 
     data = _round2_outbox("claimed", 0)
     req = B.freeze_request(
@@ -1102,8 +1116,8 @@ _ROUND2_HISTORY_BOUNDS = {
 
 
 def _round2_history(code):
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
 
     return dict(
         history_id=1,
@@ -1202,8 +1216,8 @@ _ROUND2_PUBLICATION = {
 
 
 def test_round2_domains_publication():
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
 
     for code, (intent, repair, settled) in _ROUND2_PUBLICATION.items():
         data = dict(
@@ -1250,8 +1264,8 @@ def test_round2_domains_publication():
 
 
 def test_round2_domains_attempt():
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
 
     for code in (
         "dispatched",
@@ -1302,9 +1316,10 @@ def test_round2_domains_attempt():
 
 
 def test_round2_domains_parent_cursor_batch():
-    from modkit_events.persistence.catalog import get_statement
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
+
+    from modkit_events.persistence.catalog import get_statement
 
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     fixtures = [
@@ -1383,6 +1398,7 @@ def _g1_expect_error(call, observed):
 
 def _g1_guard_fixture(key):
     from uuid import UUID
+
     from modkit_events.persistence.catalog import get_statement
 
     fence = M.Fence(
@@ -1477,7 +1493,7 @@ def test_g1_e08_e09_guard_fence_and_wire():
 
 
 def test_g1_guard_certificate_null_arms():
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     instant = datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=3)))
     for key in ("E08", "E09"):
@@ -1518,6 +1534,7 @@ def test_g1_guard_certificate_null_arms():
 
 def test_g1_e10_guardref_freeze_and_unit():
     from uuid import UUID
+
     from modkit_events.persistence.catalog import get_statement
 
     guard = M.GuardRef(
@@ -1556,6 +1573,7 @@ def test_g1_e10_guardref_freeze_and_unit():
 def test_g1_context_descriptor_and_tamper():
     from dataclasses import replace
     from uuid import UUID
+
     from modkit_events.persistence.catalog import get_statement
 
     for key in ("E08", "E09"):
@@ -1658,6 +1676,7 @@ def test_g1_bounded_failure_and_baseexception():
 def _g2_fixture(key, outcome="confirmed_success"):
     from datetime import datetime, timezone
     from uuid import UUID
+
     from modkit_events.persistence.catalog import get_statement
 
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -1848,9 +1867,9 @@ def test_g2_e32_submitted_reason_preserved():
 
 
 def test_g2_literal_results_and_each_request_field():
-    from uuid import UUID
     from datetime import timedelta
     from hashlib import sha256
+    from uuid import UUID
 
     maps = {
         "E27": {
@@ -2118,8 +2137,8 @@ def _g3_fixture(
     owner=None,
     cipher=b"cipher",
 ):
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
 
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     payload = b"o\0\0\0\1" + b"\0" * 7 + b"\1x" + b"\0" * 7 + b"\x0ai" + b"\0" * 7 + b"\x011"
@@ -2243,6 +2262,7 @@ def _g3_row(key, data, half, *, present=None):
 
 def _g3_request(key, parameters=None):
     from uuid import UUID
+
     from modkit_events.persistence.catalog import get_statement
 
     if parameters is None:
@@ -2313,7 +2333,6 @@ def test_g3_e16_full_inbox_composition():
 
 
 def test_g3_e17_direct_scoped_and_split_candidates():
-    from uuid import UUID
 
     request = _g3_request("E17")
     base, half = _g3_fixture()
@@ -2465,8 +2484,8 @@ def test_g3_immutable_identity_and_protected_evidence():
 
 
 def test_g3_buffers_uuid_utc_and_nullable_scope():
-    from datetime import timezone, timedelta
     from dataclasses import FrozenInstanceError
+    from datetime import timedelta, timezone
 
     for key in ("E16", "E17", "E34"):
         for tenant, owner in (
@@ -2638,8 +2657,8 @@ _G4_MORE_CURSOR = bytes.fromhex("187897ce0afcf20b50ba2b37dca84a951b7046f29ed5ab9
 
 
 def _g4_work(state="claimed", work=1):
-    from uuid import UUID
     from datetime import timedelta
+    from uuid import UUID
 
     data, _ = _g3_fixture(work=work)
     data["state"] = state
@@ -2657,8 +2676,8 @@ def _g4_work(state="claimed", work=1):
 
 
 def _g4_outbox(event=b"alt", state="claimed"):
-    from uuid import UUID
     from datetime import timedelta
+    from uuid import UUID
 
     work, half = _g3_fixture(event=event)
     owned = state in ("claimed", "publishing")
@@ -3024,8 +3043,8 @@ def _g4_list_request(*, after_time=None, after_work=None, namespace=b"inbox", li
 
 
 def test_g4_e30_keyset_list_boundaries():
+    from datetime import timedelta, timezone
     from uuid import UUID
-    from datetime import timezone, timedelta
 
     request = _g4_list_request()
     first = _g4_work("queued", 1)
@@ -3300,8 +3319,8 @@ def test_g5a_e02_event_binding_and_boolean():
 
 
 def test_g5a_e03_admission_binding_and_inserted_identity():
-    from uuid import UUID
     from datetime import timedelta
+    from uuid import UUID
 
     request, row = _g5a_fixture("E03")
     # Literal projection/order: no production _admission_values used as expected oracle.
@@ -3388,8 +3407,8 @@ def test_g5a_e03_admission_binding_and_inserted_identity():
 
 
 def test_g5a_e18_optional_subscription_record():
-    from datetime import timezone, timedelta
     from dataclasses import FrozenInstanceError
+    from datetime import timedelta, timezone
 
     request, row = _g5a_fixture("E18")
     assert R.decode_event_rows(request, []) is None
@@ -3608,8 +3627,9 @@ def test_g5a_bounded_demand_and_failure_identity():
 
 # G5B1: literal E05/E07 Fence/time projections; prospective scoped controls only.
 def _g5b1_fixture(key):
-    from uuid import UUID
     from datetime import datetime, timezone
+    from uuid import UUID
+
     from modkit_events.persistence.catalog import get_statement
 
     assert key in ("E05", "E07")
@@ -3625,8 +3645,8 @@ def _g5b1_fixture(key):
 
 
 def test_g5b1_e05_fence_lease_and_timestamp():
+    from datetime import datetime, timedelta, timezone
     from uuid import UUID
-    from datetime import datetime, timezone, timedelta
 
     request, expected = _g5b1_fixture("E05")
     assert tuple(p.name for p in request.statement.parameters) == (
@@ -3675,8 +3695,8 @@ def test_g5b1_e05_fence_lease_and_timestamp():
 
 
 def test_g5b1_e07_fence_available_at_and_unit():
+    from datetime import datetime, timedelta, timezone
     from uuid import UUID
-    from datetime import datetime, timezone, timedelta
 
     request, expected = _g5b1_fixture("E07")
     assert tuple(p.name for p in request.statement.parameters) == (
@@ -3710,9 +3730,9 @@ def test_g5b1_e07_fence_available_at_and_unit():
 
 
 def test_g5b1_time_context_and_failures():
-    from uuid import UUID
     from dataclasses import replace
     from datetime import datetime, tzinfo
+    from uuid import UUID
 
     empty = B.ReturnContext(expected=(), readiness=None)
     for key in ("E05", "E07"):
@@ -3818,6 +3838,7 @@ def test_g5b1_time_context_and_failures():
 # G5B2: actual attempt/failure/cancellation projections, not SQL transition proof.
 def _g5b2_fixture(key):
     from uuid import UUID
+
     from modkit_events.persistence.catalog import get_statement
 
     assert key in ("E06", "E11", "E12")
@@ -3867,8 +3888,8 @@ def _g5b2_fence_pairs(request):
 
 
 def test_g5b2_e06_attempt_dispatch_projection():
-    from uuid import UUID
     from dataclasses import replace
+    from uuid import UUID
 
     request = _g5b2_fixture("E06")
     assert tuple(p.name for p in request.statement.parameters) == (
@@ -3960,7 +3981,7 @@ def test_g5b2_e06_attempt_dispatch_projection():
 
 
 def test_g5b2_e11_failure_root_projection():
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     request = _g5b2_fixture("E11")
     assert tuple(p.name for p in request.statement.parameters) == (

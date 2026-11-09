@@ -2,13 +2,13 @@
 No product imports, driver imports, connections, or environment setup.
 """
 
-from _installation_artifact_helpers import historical_prefix_view
-
 import hashlib
 import os
 import re
 import unittest
 from pathlib import Path
+
+from _installation_artifact_helpers import historical_prefix_view
 
 SQL = Path(
     os.environ.get(

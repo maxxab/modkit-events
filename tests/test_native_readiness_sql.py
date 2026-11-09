@@ -1,9 +1,9 @@
 """Static source boundary tests. No SQL execution or migration readiness claim."""
 
-from _installation_artifact_helpers import historical_prefix_view
-
 from hashlib import sha256
 from pathlib import Path
+
+from _installation_artifact_helpers import historical_prefix_view
 
 from modkit_events.persistence.catalog import get_statement
 from modkit_events.persistence.native_codec import _selected_sql_descriptor

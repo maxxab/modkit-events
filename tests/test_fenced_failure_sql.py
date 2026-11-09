@@ -1,9 +1,9 @@
 """E11 source guards only, not PostgreSQL execution."""
 
-from _installation_artifact_helpers import historical_prefix_view
-
 import hashlib
 from importlib.resources import files
+
+from _installation_artifact_helpers import historical_prefix_view
 
 
 def test_e11_contract():

@@ -1,12 +1,11 @@
 """E13 source guards only; no PostgreSQL parsing or runtime qualification."""
 
-from _installation_artifact_helpers import historical_prefix_view
-
 import hashlib
 import re
 from importlib.resources import files
 
 import pytest
+from _installation_artifact_helpers import historical_prefix_view
 
 from modkit_events.persistence.catalog import get_statement
 

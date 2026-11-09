@@ -1,12 +1,13 @@
 """Immutable managed persistence inputs, independent of drivers and workers."""
 
 from dataclasses import dataclass
-from enum import Enum
 from datetime import datetime
-from uuid import UUID
+from enum import Enum
 from hashlib import sha256
-from .errors import _boundary, _reject_validation
+from uuid import UUID
+
 from ..models import Event
+from .errors import _boundary, _reject_validation
 
 
 class WorkKind(Enum):
@@ -115,7 +116,7 @@ class EventInput:
 
     @_boundary
     def __post_init__(self):
-        from .bindings import validate_event_replay, canonical_event
+        from .bindings import canonical_event, validate_event_replay
 
         if type(self.event) is not Event or type(self.replay_envelope) is not bytes:
             raise ValueError
@@ -194,7 +195,7 @@ class PublicationFence:
 
     @_boundary
     def __post_init__(self):
-        from .bindings import _integer, _identifier
+        from .bindings import _identifier, _integer
 
         _identifier(self.event_id)
         _integer(self.ownership_revision, 1, 2**63 - 1)
@@ -235,7 +236,7 @@ class Capability:
 
     @_boundary
     def __post_init__(self):
-        from .bindings import _integer, _identifier
+        from .bindings import _identifier, _integer
 
         _identifier(self.command_type)
         _integer(self.schema_version, 1, 2147483647)

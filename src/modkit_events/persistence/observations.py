@@ -1,8 +1,15 @@
 """Statement-local observations never clear an existing uncertain incident."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
-from .errors import ErrorCode, _boundary
+from hashlib import sha256
+from typing import Generic, TypeVar
+from uuid import UUID
+
+from .bindings import _bytes, _instant, _integer, canonical_intent, version_from_decimal
+from .errors import ErrorCode, _boundary, _observation_boundary
+from .models import AdmissionInput, ReplayPolicy, ScopeEvidence, WorkIdentity, WorkKind
 
 
 class OperationState(Enum):
@@ -81,14 +88,6 @@ def _join_uncertainty(current, incoming):
 @_boundary
 def join_uncertainty(current, incoming):
     return _join_uncertainty(current, incoming)
-
-
-from datetime import datetime
-from uuid import UUID
-from hashlib import sha256
-from .errors import _observation_boundary
-from .models import ScopeEvidence, WorkIdentity, WorkKind, ReplayPolicy, AdmissionInput
-from .bindings import _bytes, _integer, _instant, version_from_decimal, canonical_intent
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -404,8 +403,6 @@ class InboxCandidate(WorkObservation):
             raise ValueError
         _validate_inbox(self, self.inbox_half_present)
 
-
-from typing import Generic, TypeVar
 
 _T = TypeVar("_T")
 

@@ -1,41 +1,42 @@
 """Complete bounded row validation using canonical statement metadata."""
 
-from collections.abc import Sequence
-from uuid import UUID
+from collections.abc import Sequence as Sequence
+from dataclasses import dataclass, fields
 from hashlib import sha256
-from dataclasses import fields, dataclass
-from .errors import _observation_boundary, _reject_validation
-from .catalog import (
-    get_statement,
-    WireType,
-    ColumnSpec,
-    CardinalityKind,
-    RecordKind,
-    _validate_column_spec,
-)
+from uuid import UUID
+
+from . import observations as O
 from .bindings import (
+    FrozenRequest,
+    _bytes,
+    _canonical_event_raw,
+    _constraint,
+    _decode_utf8,
+    _freeze_parameters,
+    _identifier,
+    _identifier_raw,
+    _integer,
+    _integer_raw,
+    _reject_scalar,
     _scalar,
     _scalar_raw,
-    _reject_scalar,
-    _integer,
-    _identifier,
-    _bytes,
-    _constraint,
-    FrozenRequest,
-    validate_event_replay,
-    canonical_event,
     _snapshot_sequence,
-    _integer_raw,
-    _identifier_raw,
-    _decode_utf8,
     _validate_event_replay_raw,
-    _canonical_event_raw,
-    _freeze_parameters,
+    canonical_event,
+    validate_event_replay,
 )
-from . import observations as O
+from .catalog import (
+    CardinalityKind,
+    ColumnSpec,
+    RecordKind,
+    WireType,
+    _validate_column_spec,
+    get_statement,
+)
+from .errors import _observation_boundary, _reject_validation
 
 # Deliberate private dependency: schema owns the sole accepted code carriers.
-from .transitions import _WORK_HISTORY_CODES, _PUBLICATION_HISTORY_CODES, _ATTEMPT_OUTCOME_CODES
+from .transitions import _ATTEMPT_OUTCOME_CODES, _PUBLICATION_HISTORY_CODES, _WORK_HISTORY_CODES
 
 
 def _wire_scalar_core(value, wire_type, nullable, *, _reject=None):
@@ -803,7 +804,7 @@ def _decode_event_rows_raw(request, rows):
 def decode_event_rows(request, rows, /):
     result = _decode_event_rows_core(request, rows)
     if request.statement.key == "E33" and result != request.context.readiness.components:
-        from .errors import _fail, ErrorCode
+        from .errors import ErrorCode, _fail
 
         _fail(ErrorCode.SCHEMA_MISMATCH, unconfirmed=False)
     return result

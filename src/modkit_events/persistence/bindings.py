@@ -3,20 +3,42 @@
 import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from types import MappingProxyType
+from uuid import UUID
+
+from ..models import Event, _event_from_fields
+from .catalog import (
+    CardinalityKind as CardinalityKind,
+)
+from .catalog import (
+    ColumnSpec,
+    ConstraintId,
+    ParameterSpec,
+    ResultSpec,
+    StatementSpec,
+    WireType,
+)
+from .catalog import (
+    RecordKind as RecordKind,
+)
 from .errors import _boundary, _reject_validation
 from .models import (
+    AdmissionInput,
     CanonicalEvidence,
-    ProtectedBindingInput,
-    MaterialState,
     CleanupPolicy,
+    EventInput,
+    Fence,
+    GuardRef,
+    MaterialState,
+    ProtectedBindingInput,
+    PublicationFence,
     _canonical_evidence_raw,
 )
 from .scope import Scope, _encode_field
-from ..models import Event, _event_from_fields
 
 _MAX = 1048576
 
@@ -973,22 +995,6 @@ def _canonical_intent_core(admission, *, _reject=None):
     return (CanonicalEvidence if _reject is None else _canonical_evidence_raw)(
         version=1, content=raw, digest=sha256(raw).digest()
     )
-
-
-from dataclasses import dataclass
-from uuid import UUID
-from collections.abc import Sequence
-from .catalog import (
-    StatementSpec,
-    ParameterSpec,
-    ResultSpec,
-    ColumnSpec,
-    WireType,
-    ConstraintId,
-    RecordKind,
-    CardinalityKind,
-)
-from .models import AdmissionInput, EventInput, Fence, GuardRef, PublicationFence
 
 
 def _scalar_core(value, wire_type, nullable, *, _reject=None):
