@@ -407,6 +407,35 @@ _E10 = _SqlDescriptor(
     max_admitted_cell_payload_bytes=sum(c.max_payload_bytes for c in _E10_COLUMNS),
 )
 
+_E11_SQL = b"""WITH source AS MATERIALIZED (
+    SELECT s.ok
+    FROM modkit_events.e11($1::pg_catalog.uuid, $2::pg_catalog.uuid, $3::pg_catalog.int8, $4::pg_catalog.int4, $5::pg_catalog.int4, $6::pg_catalog.text::pg_catalog.xid8, $7::pg_catalog.text, $8::pg_catalog.timestamptz, $9::pg_catalog.text, $10::pg_catalog.bytea) AS s
+)
+SELECT TRUE::pg_catalog.bool AS cap_ok, s.ok
+FROM source AS s
+LIMIT 2"""
+
+_E11 = _SqlDescriptor(
+    sql=_E11_SQL,
+    parameter_casts=(
+        "pg_catalog.uuid",
+        "pg_catalog.uuid",
+        "pg_catalog.int8",
+        "pg_catalog.int4",
+        "pg_catalog.int4",
+        "pg_catalog.text",
+        "pg_catalog.text",
+        "pg_catalog.timestamptz",
+        "pg_catalog.text",
+        "pg_catalog.bytea",
+    ),
+    canonical_columns=get_statement("E11").result.columns,
+    transport_columns=_E10_COLUMNS,
+    cardinality=CardinalityKind.EXACT_ONE,
+    sentinel_limit=2,
+    max_admitted_cell_payload_bytes=2,
+)
+
 # Fixed Workers plans. No import of Workers and no runtime SQL generation.
 _W01_SQL = b"""SELECT TRUE::pg_catalog.bool AS cap_ok, s.work_id, s.inserted
 FROM modkit_workers.w01($1::pg_catalog.uuid, $2::pg_catalog.text, $3::pg_catalog.bytea, $4::pg_catalog.bytea, $5::pg_catalog.bytea, $6::pg_catalog.bytea, $7::pg_catalog.bytea, $8::pg_catalog.int4, $9::pg_catalog.bytea, $10::pg_catalog.bytea, $11::pg_catalog.bytea, $12::pg_catalog.bytea, $13::pg_catalog.bytea, $14::pg_catalog.bytea, $15::pg_catalog.bytea, $16::pg_catalog.bytea, $17::pg_catalog.text, $18::pg_catalog.int4, $19::pg_catalog.timestamptz, $20::pg_catalog.timestamptz, $21::pg_catalog.text, $22::pg_catalog.bytea, $23::pg_catalog.bytea, $24::pg_catalog.bytea, $25::pg_catalog.bytea, $26::pg_catalog.timestamptz, $27::pg_catalog.bytea, $28::pg_catalog.text, $29::pg_catalog.bytea) AS s
@@ -1982,6 +2011,8 @@ def _selected_sql_descriptor(
         return _E09
     if spec is get_statement("E10"):
         return _E10
+    if spec is get_statement("E11"):
+        return _E11
     _reject_validation()
 
 

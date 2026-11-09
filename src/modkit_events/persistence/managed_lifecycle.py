@@ -49,10 +49,12 @@ class _Handle:
 
         return start_root(self, execution_ledger=execution_ledger)
 
-    def rollback(self, *, execution_ledger):
+    def rollback(self, *, execution_ledger, confirm_failure=False):
+        if type(confirm_failure) is not bool:
+            _fail(ErrorCode.LOCAL_INVALID_ARGUMENT, unconfirmed=_context(execution_ledger))
         from .native_sync import rollback
 
-        return rollback(self, execution_ledger=execution_ledger)
+        return rollback(self, execution_ledger=execution_ledger, confirm_failure=confirm_failure)
 
     def commit(self, *, execution_ledger):
         from .native_sync import commit
@@ -378,6 +380,7 @@ def _reserve_preparation_paid(execution, capacity, ledger, reservation):
         "x": None,
         "builder": reservation,
         "profile": None,
+        "failure_binding": None,
     }
     x = None
     with _registry._synchronized():
@@ -512,6 +515,7 @@ def _release_preparation_paid(preparation, ledger, reservation, *, unreturned=Fa
             code = ErrorCode.RESOURCE_BUSY
         else:
             x = record["x"]
+            _drop_failure_binding(record, ledger)
             x["drops"] += 1
             amount = record["capacity"]
             _outgoing = _preparations.pop(preparation._stamp)
@@ -636,6 +640,14 @@ def _reserve_root(checkout, ledger):
         "ack": False,
         "commit_outcome": None,
         "observed_commit_tag": None,
+        "failure_xid": None,
+        "failure_fence": None,
+        "failure_guard": None,
+        "failure_eligible": False,
+        "failure_disabled": False,
+        "failure_verified": False,
+        "failure_preparation": None,
+        "failure_consumed": False,
     }
     operation = {
         "token": op,
@@ -709,9 +721,11 @@ def admit(root, preparation, /, *, execution_ledger):
             elif p.operation is not None:
                 code = ErrorCode.RESOURCE_BUSY
             else:
-                a["borrows"] += 1
-                candidate["prep"] = a
-                p.operation = candidate
+                code = _failure_admission_error(p, r, a, execution_ledger, uncertain=flag)
+                if code is None:
+                    a["borrows"] += 1
+                    candidate["prep"] = a
+                    p.operation = candidate
         p = r = a = candidate = None
     _reject(code, flag)
     return token
@@ -778,7 +792,15 @@ def _start_operation(ticket, result, ledger, *, reservation=None):
                 else:
                     code = _listing_capacity_error(p.operation["prep"], record["capacity"])
                     if code is None:
+                        code = _failure_admission_error(
+                            p, root, p.operation["prep"], ledger, uncertain=flag
+                        )
+                    if code is None:
                         request = p.operation["prep"]["data"]
+                        binding = p.operation["prep"].get("failure_binding")
+                        if request.statement is get_statement("E11"):
+                            failed = p.roots[binding.root._stamp]
+                            failed["failure_consumed"] = True
                         p.operation["result_stamp"] = result._stamp
                         p.operation["state"] = "RUNNING"
                         p.operation["running"] = True
@@ -1097,7 +1119,7 @@ def _typed_result_size(request, payload):
     from .observations import GuardRow
     from .rows import _decode_native_event_result_raw
 
-    if any(request.statement is get_statement(key) for key in ("E06", "E08", "E09", "E10")):
+    if any(request.statement is get_statement(key) for key in ("E06", "E08", "E09", "E10", "E11")):
         columns = request.statement.result.columns
         if request.statement.key in ("E08", "E09"):
             if payload is None:
@@ -1289,6 +1311,8 @@ def release_root(root, /, *, execution_ledger):
             p, record = _root(root, execution_ledger)
             if record is None:
                 code = ErrorCode.INVALID_OBSERVATION
+            elif record["failure_preparation"] is not None:
+                code = ErrorCode.RESOURCE_BUSY
             elif record["state"] != "ENDED" and not (
                 record["state"] == "ABANDONED" and p.close_ack
             ):
@@ -1545,12 +1569,13 @@ def _reserve_rollback(root, ledger, *, commit=False):
     return op, receipt, code
 
 
-def _complete_rollback(root, ledger, *, known):
+def _complete_rollback(root, ledger, *, known, failure_verified=False):
     if not known:
         ledger.note_incident(ErrorCode.OUTCOME_UNKNOWN)
     with _registry._synchronized():
         p, r = _root(root, ledger)
         assert r is not None and r["state"] == "FINALIZING"
+        r["failure_verified"] = known and failure_verified
         r["state"] = "RECORDED" if known else "UNKNOWN"
         if not known:
             p.blocked_root = True
@@ -1766,3 +1791,243 @@ def _operation_max_page_payload_bytes(ticket, ledger, /, *, reservation):
         physical = None
     _reject(code, flag)
     return budget
+
+
+def _observe_native_result_paid(ticket, result, ledger, reservation):
+    """Native issuer hook, never an observation-object or public setter proof.
+
+    The reservation is the exact still-live issuer installed at atomic start.
+    Fixed scalar copies remain charged to R after A/B have been released.
+    """
+    if not _reservation_live(reservation):
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+    with _registry._synchronized():
+        p = _ticket(ticket, ledger)
+        b = _envelope(result, ledger, "B")
+        if (
+            p is None or b is None or b["operation"] is not p.operation
+            or p.operation.get("issuer") is not reservation
+            or p.operation["state"] != "COMPLETED" or p.operation["running"]
+            or not b["populated"] or p.operation["result_stamp"] is not result._stamp
+        ):
+            _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+        request = p.operation["prep"]["data"]
+        if type(request) is not FrozenRequest or not any(
+            request.statement is get_statement(key) for key in ("E14", "E08", "E09")
+        ):
+            return
+        r = p.roots[ticket._subject]
+        # Fail closed before any fallible validation/copy/publication. A failed
+        # hook is HELD by its issuer, including failure after partial publication.
+        eligible = r["failure_eligible"]
+        r["failure_eligible"] = False
+        _preparation_size(request)
+        _typed_result_size(request, b["data"])
+        if r["failure_disabled"]:
+            return
+        if request.statement is get_statement("E14"):
+            xid = b["data"]
+            if r["failure_xid"] is None:
+                r["failure_xid"] = xid
+            elif r["failure_xid"] != xid:
+                r["failure_disabled"] = True
+            r["failure_eligible"] = eligible and not r["failure_disabled"]
+            return
+        guard = b["data"]
+        if guard is None:
+            if eligible:
+                r["failure_disabled"] = True
+            return
+        fence = (guard.work_id.int, guard.token.int, guard.ownership_revision,
+                 guard.cycle, guard.expected_attempt)
+        if r["failure_xid"] is None:
+            return
+        if request.statement is get_statement("E09") and not eligible:
+            return
+        if (
+            guard.root_xid != r["failure_xid"]
+            or (r["failure_fence"] is not None and r["failure_fence"] != fence)
+            or (r["failure_guard"] is not None and r["failure_guard"] != guard.guard_id.int)
+        ):
+            r["failure_disabled"] = True
+            return
+        r["failure_fence"] = fence
+        r["failure_guard"] = guard.guard_id.int
+        r["failure_eligible"] = True
+
+
+def _failure_rollback_preflight(root, ledger, *, uncertain):
+    """Known strict gates return codes before root reservation or driver I/O."""
+    with _registry._synchronized():
+        p, r = _root(root, ledger)
+        if r is None:
+            return None, ErrorCode.INVALID_OBSERVATION
+        if not _usable(p) or p.blocked_root or uncertain:
+            return None, ErrorCode.PROFILE_REJECTED
+        if p.operation is not None:
+            return None, ErrorCode.RESOURCE_BUSY
+        if r["state"] != "ACTIVE" or p.current is not root:
+            return None, ErrorCode.INVALID_OBSERVATION
+        if not r["failure_eligible"] or r["failure_disabled"]:
+            return None, ErrorCode.INVALID_OBSERVATION
+        return r["failure_xid"], None
+
+
+def _failure_preflight_unknown(root, ledger):
+    """Unexpected strict accessor failure cannot be a harmless local reject."""
+    with _registry._synchronized():
+        p, r = _root(root, ledger)
+        if r is not None and p.current is root and p.operation is None:
+            r["failure_eligible"] = False
+            r["state"] = "UNKNOWN"
+            p.blocked_root = True
+    ledger.note_incident(ErrorCode.OUTCOME_UNKNOWN)
+
+
+@dataclass(frozen=True, slots=True)
+class _FailureBinding:
+    root: _Handle
+    receipt: _Handle
+    request: FrozenRequest
+    parameters: tuple
+    context: object
+    expected: tuple
+    fence: object
+    snapshot: tuple
+
+
+def _failure_snapshot(request):
+    """Exact immutable scalar snapshot, including mutable UUID internals."""
+    if type(request) is not FrozenRequest or request.statement is not get_statement("E11"):
+        _reject_validation()
+    _freeze_parameters(
+        request.statement, request.parameters, request.context, _reject=_reject_validation
+    )
+    def scalar(value):
+        if type(value) is UUID:
+            return value.int
+        if type(value) is datetime:
+            return (value.year, value.month, value.day, value.hour, value.minute,
+                    value.second, value.microsecond, value.fold)
+        return value
+    return tuple(scalar(value) for value in request.parameters)
+
+
+def _snapshot_size(snapshot):
+    # Every occurrence is counted, including shared reason/evidence bytes.
+    return getsizeof(snapshot) + sum(
+        getsizeof(value) + (
+            sum(getsizeof(field) for field in value) if type(value) is tuple else 0
+        ) for value in snapshot
+    )
+
+
+def _failure_binding_size(request, binding):
+    # Identity pins keep old parameter/context graphs reachable after malicious
+    # carrier replacement. Reserve a second complete request graph conservatively.
+    return 2 * _preparation_size(request) + getsizeof(binding) + _snapshot_size(binding.snapshot)
+
+
+def bind_failure_settlement(preparation, failed_root, rollback_receipt, /, *, execution_ledger):
+    """Bind one paid E11 preparation to acknowledged strict explicit rollback.
+
+    Caller asserts this is a database-local failure with no external effects.
+    This function neither classifies business exceptions nor infers retry safety.
+    """
+    flag = _context(execution_ledger)
+    _require_handles(flag, preparation, failed_root, rollback_receipt)
+    code = None
+    with _construction(flag):
+        a = p = r = request = snapshot = binding = None
+        with _registry._synchronized():
+            a = _envelope(preparation, execution_ledger, "A")
+            p, r = _root(failed_root, execution_ledger)
+            if a is None or r is None or a["x"] is not p.x:
+                code = ErrorCode.INVALID_OBSERVATION
+            elif not _usable(p) or p.blocked_root or flag:
+                code = ErrorCode.PROFILE_REJECTED
+            elif (
+                type(rollback_receipt) is not _Handle
+                or rollback_receipt._kind != "ROOT_END"
+                or r["receipt"] is not rollback_receipt
+                or r["state"] != "ENDED" or not r["ack"]
+                or not r["failure_verified"] or not r["failure_eligible"]
+                or r["failure_disabled"] or r["failure_consumed"]
+                or a.get("failure_binding") is not None
+            ):
+                code = ErrorCode.INVALID_OBSERVATION
+            elif r["failure_preparation"] is not None or a["borrows"]:
+                code = ErrorCode.RESOURCE_BUSY
+            else:
+                request = a["data"]
+                try:
+                    snapshot = _failure_snapshot(request)
+                    if snapshot[:5] != r["failure_fence"] or snapshot[5] != r["failure_xid"]:
+                        code = ErrorCode.INVALID_OBSERVATION
+                    else:
+                        binding = _FailureBinding(
+                            failed_root, rollback_receipt, request, request.parameters,
+                            request.context, request.context.expected,
+                            request.context.expected[0], snapshot,
+                        )
+                        if _failure_binding_size(request, binding) > a["capacity"]:
+                            code = ErrorCode.CAPACITY_EXCEEDED
+                except _ValidationReject as error:
+                    if type(error) is not _ValidationReject:
+                        raise
+                    code = ErrorCode.LOCAL_INVALID_ARGUMENT
+                if code is None:
+                    a["failure_binding"] = binding
+                    r["failure_preparation"] = preparation._stamp
+        a = p = r = request = snapshot = binding = None
+    _reject(code, flag)
+
+
+def _failure_admission_error(p, r, a, ledger, *, uncertain):
+    request = a["data"]
+    binding = a.get("failure_binding")
+    # A mutated bound statement must not escape its proof checks.
+    if binding is None and not (
+        type(request) is FrozenRequest and request.statement is get_statement("E11")
+    ):
+        return None
+    if not _usable(p) or p.blocked_root or uncertain:
+        return ErrorCode.PROFILE_REJECTED
+    if type(binding) is not _FailureBinding:
+        return ErrorCode.INVALID_OBSERVATION
+    old_p, failed = _root(binding.root, ledger)
+    if (
+        old_p is not p or failed is None or failed is r
+        or failed["state"] != "ENDED" or not failed["ack"]
+        or failed["receipt"] is not binding.receipt or not failed["failure_verified"]
+        or not failed["failure_eligible"] or failed["failure_disabled"]
+        or failed["failure_consumed"]
+        or failed["failure_preparation"] is not a["token"]._stamp
+        or a["x"] is not p.x or r["token"] is not p.current or r["state"] != "ACTIVE"
+        or request is not binding.request
+        or request.parameters is not binding.parameters or request.context is not binding.context
+        or request.context.expected is not binding.expected
+        or len(request.context.expected) != 1 or request.context.expected[0] is not binding.fence
+    ):
+        return ErrorCode.INVALID_OBSERVATION
+    try:
+        snapshot = _failure_snapshot(request)
+    except _ValidationReject as error:
+        if type(error) is not _ValidationReject:
+            raise
+        return ErrorCode.INVALID_OBSERVATION
+    if (
+        snapshot != binding.snapshot or snapshot[:5] != failed["failure_fence"]
+        or snapshot[5] != failed["failure_xid"]
+    ):
+        return ErrorCode.INVALID_OBSERVATION
+    return None
+
+
+def _drop_failure_binding(preparation, ledger):
+    binding = preparation.get("failure_binding")
+    if binding is not None:
+        p, failed = _root(binding.root, ledger)
+        assert failed is not None and failed["failure_preparation"] is preparation["token"]._stamp
+        failed["failure_preparation"] = None
+        preparation["failure_binding"] = None

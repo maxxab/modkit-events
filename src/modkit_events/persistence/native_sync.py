@@ -163,41 +163,109 @@ def start_root(checkout, /, *, execution_ledger):
     return root
 
 
-def rollback(root, /, *, execution_ledger):
-    """Observe actual full-root rollback, never idle/no-op or savepoint history."""
+def _verify_failure_root(actual, original, expected_xid):
+    """One bounded no-assignment observation under rollback's existing D."""
+    cursor = result = value = None
+    primary = None
+    try:
+        cursor = psycopg.Cursor(actual, row_factory=tuple_row)
+        cursor.execute(
+            "SELECT pg_catalog.pg_current_xact_id_if_assigned()",
+            prepare=False, binary=True,
+        )
+        result = cursor.pgresult
+        if (
+            result is None or result.status != pq.ExecStatus.TUPLES_OK
+            or result.ntuples != 1 or result.nfields != 1
+            or result.binary_tuples != 1
+            or result.fname(0) != b"pg_current_xact_id_if_assigned"
+            or result.ftype(0) != 5069 or result.fformat(0) != 1
+            or result.fsize(0) != 8
+            or result.command_status != b"SELECT 1" or result.command_tuples != 1
+            or cursor.rowcount != 1 or cursor.statusmessage != "SELECT 1"
+        ):
+            _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+        value = result.get_value(0, 0)
+        if (
+            type(value) is not bytes or len(value) != 8
+            or int.from_bytes(value, "big") != expected_xid or expected_xid <= 0
+            or cursor.nextset() is not None
+        ):
+            _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+    except BaseException as error:
+        primary = _capture(error)
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except BaseException as error:
+                if primary is None:
+                    primary = _capture(error)
+    if primary is not None:
+        _raise_primary(primary)
+    if not _live(actual, original, (pq.TransactionStatus.INTRANS,)):
+        _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+
+
+def rollback(root, /, *, execution_ledger, confirm_failure=False):
+    """Explicit rollback; strict mode also observes the armed physical XID.
+
+    Exclusive cooperative ownership remains required between probe and rollback.
+    Ordinary rollback and INERROR recovery never mint failure-settlement proof.
+    """
+    if type(confirm_failure) is not bool:
+        _fail(ErrorCode.LOCAL_INVALID_ARGUMENT, unconfirmed=_managed._context(execution_ledger))
     flag = _shape(root, execution_ledger)
     primary = None
     code = None
     known = False
     try:
         with _managed._construction(flag):
-            _operation, receipt, code = _managed._reserve_rollback(root, execution_ledger)
-            actual = original = None
-            if code is None:
+            actual = original = _operation = receipt = None
+            if confirm_failure:
+                xid, code = _managed._failure_rollback_preflight(
+                    root, execution_ledger, uncertain=flag
+                )
+                if code is None:
+                    try:
+                        actual, original = _borrow(root, execution_ledger)
+                        if not _live(actual, original, (pq.TransactionStatus.INTRANS,)):
+                            code = ErrorCode.PROFILE_REJECTED
+                    except BaseException as error:
+                        primary = _capture(error)
+                        try:
+                            _managed._failure_preflight_unknown(root, execution_ledger)
+                        except BaseException:
+                            pass
+            if code is None and primary is None:
+                _operation, receipt, code = _managed._reserve_rollback(root, execution_ledger)
+            if code is None and primary is None:
                 actual, original = _borrow(root, execution_ledger)
                 try:
                     if not _live(
-                        actual,
-                        original,
+                        actual, original,
                         (pq.TransactionStatus.INTRANS, pq.TransactionStatus.INERROR),
                     ):
                         code = ErrorCode.PROFILE_REJECTED
                     else:
+                        if confirm_failure:
+                            if not _live(actual, original, (pq.TransactionStatus.INTRANS,)):
+                                _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
+                            _verify_failure_root(actual, original, xid)
                         psycopg.Connection.rollback(actual)
                         known = _live(actual, original, (pq.TransactionStatus.IDLE,))
                 except BaseException as error:
                     primary = _capture(error)
-                _managed._complete_rollback(root, execution_ledger, known=known)
+                _managed._complete_rollback(
+                    root, execution_ledger, known=known,
+                    failure_verified=confirm_failure and known,
+                )
                 if not known and code is None:
                     code = ErrorCode.OUTCOME_UNKNOWN
             actual = original = _operation = None
             if primary is not None:
-                # Escape while D still owns driver/cursor traceback frames.
-                # UNKNOWN bookkeeping above precedes permanent containment.
                 _raise_primary(primary)
     except BaseException as failure:
-        # A secondary union/publication/cleanup failure cannot replace the
-        # first actual public-call failure. Construction retains D/contains.
         if primary is None:
             primary = _capture(failure)
         actual = original = None

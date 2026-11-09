@@ -134,7 +134,7 @@ def test_state_transport_is_bytea_while_canonical_state_remains_text():
     assert actual.transport_columns[5].name == actual.canonical_columns[4].name == "state"
 
 
-@pytest.mark.parametrize("key", ["E06", "E08", "E09", "E10", "E14", "E28"])
+@pytest.mark.parametrize("key", ["E06", "E08", "E09", "E10", "E11", "E14", "E28"])
 def test_selected_plan_and_column_metadata_are_immutable(key):
     actual = select(C.get_statement(key))
     with pytest.raises(FrozenInstanceError):
@@ -146,7 +146,7 @@ def test_selected_plan_and_column_metadata_are_immutable(key):
 
 
 @pytest.mark.parametrize(
-    "key", [f"E{i:02}" for i in range(1, 35) if i not in (6, 8, 9, 10, 14, 28)]
+    "key", [f"E{i:02}" for i in range(1, 35) if i not in (6, 8, 9, 10, 11, 14, 28)]
 )
 def test_every_unselected_event_spec_refuses_a_descriptor(key):
     assert type(capture(lambda: select(C.get_statement(key)))) is E._ValidationReject

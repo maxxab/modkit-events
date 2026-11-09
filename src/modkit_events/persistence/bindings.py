@@ -1104,7 +1104,7 @@ def _statement_shape_raw(statement):
         _reject_validation()
     from . import catalog
 
-    expected_key = next((key for key in ("E06", "E08", "E09", "E10", "E14", "E28")
+    expected_key = next((key for key in ("E06", "E08", "E09", "E10", "E11", "E14", "E28")
                          if statement is catalog.get_statement(key)), None)
     if expected_key is None:
         _reject_validation()
@@ -1272,8 +1272,17 @@ def _constraint_raw(value, code):
     if code.value in bounds:
         _integer_raw(value, *bounds[code.value])
         return
+    if code.value == "failure_outcome":
+        if type(value) is not str or value not in ("failed", "cancelled", "retry_waiting"):
+            _reject_validation()
+        return
+    if code.value == "reason":
+        if type(value) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,255}", value) is None:
+            _reject_validation()
+        return
     if code.value not in ("work_id", "token", "dispatch_id", "request_evidence",
-                          "guard_id", "root_xid", "result"):
+                          "guard_id", "root_xid", "result", "failed_business_root",
+                          "retry_at", "evidence"):
         _reject_validation()
 
 

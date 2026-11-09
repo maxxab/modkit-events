@@ -167,7 +167,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     value = None
     page_payload_bytes = 0
     previous_work_id = None
-    completion = operation is None and request.statement.key in ("E06", "E08", "E09", "E10")
+    completion = operation is None and request.statement.key in ("E06", "E08", "E09", "E10", "E11")
     accumulator = [None] * count if operation is not None or completion else None
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
@@ -276,7 +276,7 @@ def execute(ticket, result, /, *, execution_ledger):
     """Populate the reserved result on the caller root, without finalizing it.
 
     The caller must reserve one result before this call (64 bytes for E14 or
-    4 MiB for every valid E28 row; 64 bytes for E06/E10, 4096 for E08/E09;
+    4 MiB for every valid E28 row; 64 bytes for E06/E10/E11, 4096 for E08/E09;
     Workers uses its retained-ticket capacity).
     Read it through managed read_result after return. Capacity/setter rejection
     after execution is held, not retryable.
@@ -338,7 +338,7 @@ def execute(ticket, result, /, *, execution_ledger):
                     parameters[6],
                     Int8(max_page_payload_bytes),
                 )
-            elif operation is None and request.statement.key in ("E06", "E08", "E09", "E10"):
+            elif operation is None and request.statement.key in ("E06", "E08", "E09", "E10", "E11"):
                 from psycopg.types.numeric import Int8BinaryDumper
 
                 cursor.adapters.register_dumper(int, Int8BinaryDumper)
@@ -346,6 +346,8 @@ def execute(ticket, result, /, *, execution_ledger):
                     # A validated unsigned XID needs at most 20 decimal bytes.
                     # Keep the canonical request unchanged; this tuple is D-owned.
                     parameters = parameters[:2] + (str(parameters[2]),) + parameters[3:]
+                elif request.statement is get_statement("E11"):
+                    parameters = parameters[:5] + (str(parameters[5]),) + parameters[6:]
             elif max_page_payload_bytes is not None:
                 from psycopg.types.numeric import Int8BinaryDumper
 
@@ -375,6 +377,7 @@ def execute(ticket, result, /, *, execution_ledger):
             _managed.set_result(result, value, execution_ledger=execution_ledger)
             _managed._complete_operation(ticket, execution_ledger, known=True)
             _managed.validate_ticket(ticket, execution_ledger=execution_ledger)
+            _managed._observe_native_result_paid(ticket, result, execution_ledger, paid)
         except BaseException as error:
             primary = _native._capture(error)
             owned = False
