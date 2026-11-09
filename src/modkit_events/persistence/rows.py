@@ -59,8 +59,8 @@ def _wire_scalar_raw(value, wire_type, nullable):
 def _decode_columns_core(columns, values, *, _reject=None):
     if (
         _reject is not None
-        and columns is not get_statement("E14").result.columns
-        and columns is not get_statement("E28").result.columns
+        and not any(columns is get_statement(key).result.columns
+                    for key in ("E06", "E08", "E09", "E10", "E14", "E28"))
     ):
         _reject_scalar(_reject)
     if (
@@ -549,7 +549,11 @@ def _finish_event_rows(spec, items):
 
 
 def _decode_event_rows_raw(request, rows):
-    """Compose the selected E14/E28 row graph without public sanitizers."""
+    """Compose the fixed selected Events row graph without public sanitizers."""
+    if type(request) is FrozenRequest and any(
+        request.statement is get_statement(key) for key in ("E06", "E08", "E09", "E10")
+    ):
+        return _decode_native_event_result_raw(request, rows)
     p = _request_raw(request)
     spec = request.statement.result
     if request.statement is get_statement("E14"):
@@ -602,3 +606,62 @@ def _decode_work_observation_raw(values, /):
             _reject_validation()
         data["resolution"] = None
     return O._work_observation_raw(**data)
+
+
+def _decode_guard_raw(values, /):
+    """Validate the complete guard before creating its immutable public carrier."""
+    columns = get_statement("E08").result.columns
+    decoded = _decode_columns_raw(columns, values)
+    _integer_raw(decoded[4], 1, 2**63 - 1)
+    _integer_raw(decoded[5], 1, 1)
+    _integer_raw(decoded[6], 1, 1000)
+    certificate = decoded[8:]
+    if decoded[7]:
+        if (any(value is None for value in certificate)
+                or decoded[9] != "succeeded" or len(decoded[10]) != 32):
+            _reject_validation()
+    elif any(value is not None for value in certificate):
+        _reject_validation()
+    result = object.__new__(O.GuardRow)
+    for column, value in zip(columns, decoded):
+        object.__setattr__(result, column.name, value)
+    return result
+
+
+def _decode_native_event_result_raw(request, rows, /):
+    """Complete fixed completion results without replacing the retained request.
+
+    Validation temporaries are bounded and owned by the issuer's existing D.
+    In particular, discard _freeze_parameters' tuple instead of publishing it.
+    """
+    if type(request) is not FrozenRequest:
+        _reject_validation()
+    statement = request.statement
+    key = next((key for key in ("E06", "E08", "E09", "E10")
+                if statement is get_statement(key)), None)
+    if key is None:
+        _reject_validation()
+    _freeze_parameters(statement, request.parameters, request.context,
+                       _reject=_reject_validation)
+    if type(rows) is not tuple or len(rows) > 1 or (key != "E09" and len(rows) != 1):
+        _reject_validation()
+    if not rows:
+        return None
+    values = _decode_columns_raw(statement.result.columns, rows[0])
+    if key == "E06":
+        _integer_raw(values[0], 1, 1000)
+        if values[0] != request.parameters[4] + 1:
+            _reject_validation()
+        return values[0]
+    if key == "E10":
+        if values[0] is not True:
+            _reject_validation()
+        return True
+    result = _decode_guard_raw(values)
+    if result.satisfied or any(
+        getattr(result, name) != value
+        for name, value in zip(("work_id", "token", "ownership_revision", "cycle",
+                                "expected_attempt"), request.parameters)
+    ):
+        _reject_validation()
+    return result

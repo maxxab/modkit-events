@@ -429,13 +429,22 @@ def _preparation_size(payload, operation=None, *, max_page_payload_bytes=None):
         payload.context,
         _reject=_reject_validation,
     )
-    return (
+    def scalar_size(value):
+        return getsizeof(value) + (getsizeof(value.int) if type(value) is UUID else 0)
+
+    size = (
         getsizeof(payload)
         + getsizeof(payload.parameters)
-        + sum(getsizeof(value) for value in payload.parameters)
+        + sum(scalar_size(value) for value in payload.parameters)
         + getsizeof(payload.context)
         + getsizeof(payload.context.expected)
     )
+    # Count every retained occurrence, even if parameter/context fields alias.
+    for expected in payload.context.expected:
+        size += getsizeof(expected)
+        size += sum(scalar_size(getattr(expected, name))
+                    for name in expected.__dataclass_fields__)
+    return size
 
 
 def _set_preparation_paid(
@@ -1064,6 +1073,7 @@ def _retained_scalar_size(value, column):
         WireType.INT4: int,
         WireType.INT8: int,
         WireType.XID8: int,
+        WireType.BOOL: bool,
         WireType.UUID: UUID,
         WireType.TIMESTAMPTZ: datetime,
     }.get(column.wire_type)
@@ -1084,6 +1094,26 @@ def _retained_scalar_size(value, column):
 
 
 def _typed_result_size(request, payload):
+    from .observations import GuardRow
+    from .rows import _decode_native_event_result_raw
+
+    if any(request.statement is get_statement(key) for key in ("E06", "E08", "E09", "E10")):
+        columns = request.statement.result.columns
+        if request.statement.key in ("E08", "E09"):
+            if payload is None:
+                _decode_native_event_result_raw(request, ())
+                return getsizeof(None)
+            if type(payload) is not GuardRow:
+                _reject_validation()
+            values = tuple(getattr(payload, column.name) for column in columns)
+            size = getsizeof(payload) + sum(
+                _retained_scalar_size(value, column) for value, column in zip(values, columns)
+            )
+        else:
+            values = (payload,)
+            size = _retained_scalar_size(payload, columns[0])
+        _decode_native_event_result_raw(request, (values,))
+        return size
     columns = request.statement.result.columns
     if request.statement is get_statement("E14"):
         size = _retained_scalar_size(payload, columns[0])

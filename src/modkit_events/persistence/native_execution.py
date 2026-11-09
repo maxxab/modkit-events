@@ -1,4 +1,4 @@
-"""Optional fixed E14/E28 and W01/W02/W03/W04/W05 issuer on the original caller-owned managed root.
+"""Optional fixed completion/E14/E28 and W01/W02/W03/W04/W05 issuer on the original caller-owned managed root.
 
 Cooperative fresh/unpooled psycopg 3.3.8, libpq 180006 profile. No nested/raw
 transaction bypass, global/custom adapter changes, concurrent direct connection
@@ -22,7 +22,7 @@ from .bindings import _freeze_request_raw, _return_context_raw
 from .catalog import CardinalityKind, get_statement
 from .errors import ErrorCode, PersistenceError, _fail, _ValidationReject
 from .native_codec import _decode_binary_transport_row, _selected_sql_descriptor
-from .rows import _decode_outbox_raw
+from .rows import _decode_native_event_result_raw, _decode_outbox_raw
 
 _PREPARATION_BYTES = 1024
 _FIXED_WIDTHS = {16: 1, 5069: 8, 23: 4, 2950: 16, 20: 8, 1184: 8, 17: -1}
@@ -45,19 +45,33 @@ _W03_LARGE_COLUMNS = (
 )
 
 
-def prepare(execution, statement, parameters, /, *, execution_ledger):
+def prepare(
+    execution,
+    statement,
+    parameters,
+    /,
+    *,
+    execution_ledger,
+    context=None,
+    capacity=_PREPARATION_BYTES,
+):
     """One paid frame reserves before freezing; no database or nested D use."""
     flag = _managed._context(execution_ledger)
     _managed._require_handles(flag, execution)
+    _managed._size(capacity, flag)
     with _managed._construction(flag) as paid:
         preparation, code = _managed._reserve_preparation_paid(
-            execution, _PREPARATION_BYTES, execution_ledger, paid
+            execution, capacity, execution_ledger, paid
         )
         reserved = code is None
         request = None
         if reserved:
             try:
-                request = _freeze_request_raw(statement, parameters, context=_return_context_raw())
+                request = _freeze_request_raw(
+                    statement,
+                    parameters,
+                    context=_return_context_raw() if context is None else context,
+                )
             except _ValidationReject as error:
                 if type(error) is not _ValidationReject:
                     raise
@@ -153,7 +167,8 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     value = None
     page_payload_bytes = 0
     previous_work_id = None
-    accumulator = [None] * count if operation is not None else None
+    completion = operation is None and request.statement.key in ("E06", "E08", "E09", "E10")
+    accumulator = [None] * count if operation is not None or completion else None
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
         if type(cap) is not bytes or cap != b"\x01":
@@ -207,7 +222,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
                     ):
                         _invalid()
                     previous_work_id = work_id
-            if operation is not None:
+            if operation is not None or completion:
                 accumulator[row_index] = decoded
             else:
                 value = (
@@ -222,6 +237,15 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
         copied = decoded = None
     if cursor.nextset() is not None:
         _invalid()
+    if completion:
+        rows = tuple(accumulator)
+        accumulator = None
+        try:
+            value = _decode_native_event_result_raw(request, rows)
+        except _ValidationReject as error:
+            if type(error) is not _ValidationReject:
+                raise
+            _invalid()
     if operation is not None:
         rows = tuple(accumulator)
         accumulator = None
@@ -252,7 +276,8 @@ def execute(ticket, result, /, *, execution_ledger):
     """Populate the reserved result on the caller root, without finalizing it.
 
     The caller must reserve one result before this call (64 bytes for E14 or
-    4 MiB for every valid E28 row; Workers uses its retained-ticket capacity).
+    4 MiB for every valid E28 row; 64 bytes for E06/E10, 4096 for E08/E09;
+    Workers uses its retained-ticket capacity).
     Read it through managed read_result after return. Capacity/setter rejection
     after execution is held, not retryable.
     """
@@ -313,6 +338,14 @@ def execute(ticket, result, /, *, execution_ledger):
                     parameters[6],
                     Int8(max_page_payload_bytes),
                 )
+            elif operation is None and request.statement.key in ("E06", "E08", "E09", "E10"):
+                from psycopg.types.numeric import Int8BinaryDumper
+
+                cursor.adapters.register_dumper(int, Int8BinaryDumper)
+                if request.statement is get_statement("E10"):
+                    # A validated unsigned XID needs at most 20 decimal bytes.
+                    # Keep the canonical request unchanged; this tuple is D-owned.
+                    parameters = parameters[:2] + (str(parameters[2]),) + parameters[3:]
             elif max_page_payload_bytes is not None:
                 from psycopg.types.numeric import Int8BinaryDumper
 

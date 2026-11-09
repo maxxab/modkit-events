@@ -1104,11 +1104,9 @@ def _statement_shape_raw(statement):
         _reject_validation()
     from . import catalog
 
-    if statement is catalog.get_statement("E14"):
-        expected_key = "E14"
-    elif statement is catalog.get_statement("E28"):
-        expected_key = "E28"
-    else:
+    expected_key = next((key for key in ("E06", "E08", "E09", "E10", "E14", "E28")
+                         if statement is catalog.get_statement(key)), None)
+    if expected_key is None:
         _reject_validation()
     key = statement.key
     if type(key) is not str or key != expected_key:
@@ -1149,10 +1147,15 @@ def _validate_return_context(context, *, _reject=None):
             or context.readiness is not None
         ):
             _reject_scalar(_reject)
-        from .models import _validate_admission_input_raw
+        from .models import _validate_admission_input_raw, _validate_fence_raw
 
         for value in context.expected:
-            _validate_admission_input_raw(value)
+            if type(value) is Fence:
+                _validate_fence_raw(value)
+            elif type(value) is GuardRef:
+                _validate_guard_ref_raw(value)
+            else:
+                _validate_admission_input_raw(value)
         return
     allowed = (AdmissionInput, EventInput, Fence, GuardRef, PublicationFence)
     if type(context.expected) is not tuple or len(context.expected) > 2:
@@ -1243,11 +1246,35 @@ def _constraint(value, code, *, _reject=None):
     if name not in permitted:raise ValueError
 
 
-def _constraint_raw(value, code):
-    """Only the E28 event-id constraint is selected for the first raw graph."""
-    if code is not ConstraintId.EVENT_ID:
+def _validate_guard_ref_raw(value, /):
+    """Check the retained reference directly, without reconstructing a Fence."""
+    if type(value) is not GuardRef:
         _reject_validation()
-    return _constraint(value, code, _reject=_reject_validation)
+    for name in ("guard_id", "work_id", "token"):
+        _uuid_raw(getattr(value, name))
+    _integer_raw(value.root_xid, 1, 2**64 - 1)
+    _integer_raw(value.ownership_revision, 1, 2**63 - 1)
+    _integer_raw(value.cycle, 1, 1)
+    _integer_raw(value.expected_attempt, 0, 1000)
+
+
+def _constraint_raw(value, code):
+    """Only constraints reached by the fixed selected Events requests."""
+    if type(code) is not ConstraintId:
+        _reject_validation()
+    if code in (ConstraintId.EVENT_ID, ConstraintId.EFFECT_ID,
+                ConstraintId.PROVIDER_KEY_REFERENCE):
+        if value is not None:
+            _identifier_raw(_decode_utf8(_bytes_raw(value), _reject=_reject_validation))
+        return
+    bounds = {"ownership_revision": (1, 2**63 - 1), "cycle": (1, 1),
+              "expected_attempt": (0, 1000)}
+    if code.value in bounds:
+        _integer_raw(value, *bounds[code.value])
+        return
+    if code.value not in ("work_id", "token", "dispatch_id", "request_evidence",
+                          "guard_id", "root_xid", "result"):
+        _reject_validation()
 
 
 def _admission_values_core(admission, *, _reject=None):
@@ -1472,7 +1499,7 @@ def freeze_request(statement,parameters,/,*,context):
 
 
 def _freeze_request_raw(statement, parameters, /, *, context):
-    """Validate the selected E14/E28 graph before creating its final carrier."""
+    """Validate the fixed selected Events graph before creating its final carrier."""
     frozen = _freeze_parameters(statement, parameters, context, _reject=_reject_validation)
     request = object.__new__(FrozenRequest)
     object.__setattr__(request, "statement", statement)
