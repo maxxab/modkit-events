@@ -1068,7 +1068,7 @@ def _scalar(value, wire_type, nullable):
 
 _RAW_SCALAR_TYPES = frozenset((
     WireType.UUID, WireType.BYTEA, WireType.TEXT, WireType.INT4,
-    WireType.INT8, WireType.XID8, WireType.BOOL, WireType.TIMESTAMPTZ,
+    WireType.INT8, WireType.XID8, WireType.BOOL, WireType.TIMESTAMPTZ, WireType.FLOAT8,
 ))
 
 
@@ -1078,6 +1078,10 @@ def _scalar_raw(value, wire_type, nullable):
         _reject_validation()
     if wire_type is WireType.BYTEA and value is not None and type(value) is not bytes:
         _reject_validation()
+    if wire_type is WireType.FLOAT8:
+        if type(value) is not float or not math.isfinite(value):
+            _reject_validation()
+        return value
     if value is not None and wire_type is WireType.TIMESTAMPTZ:
         return _instant_raw(value)
     if value is not None and wire_type is WireType.UUID:
@@ -1104,7 +1108,7 @@ def _statement_shape_raw(statement):
         _reject_validation()
     from . import catalog
 
-    expected_key = next((key for key in ("E06", "E08", "E09", "E10", "E11", "E14", "E28")
+    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32")
                          if statement is catalog.get_statement(key)), None)
     if expected_key is None:
         _reject_validation()
@@ -1272,6 +1276,10 @@ def _constraint_raw(value, code):
     if code.value in bounds:
         _integer_raw(value, *bounds[code.value])
         return
+    if code.value == "lease_seconds":
+        if type(value) is not float or not math.isfinite(value) or not 0 < value <= 3600:
+            _reject_validation()
+        return
     if code.value == "failure_outcome":
         if type(value) is not str or value not in ("failed", "cancelled", "retry_waiting"):
             _reject_validation()
@@ -1282,7 +1290,7 @@ def _constraint_raw(value, code):
         return
     if code.value not in ("work_id", "token", "dispatch_id", "request_evidence",
                           "guard_id", "root_xid", "result", "failed_business_root",
-                          "retry_at", "evidence"):
+                          "retry_at", "evidence", "operation_id", "binding"):
         _reject_validation()
 
 
@@ -1509,6 +1517,18 @@ def freeze_request(statement,parameters,/,*,context):
 
 def _freeze_request_raw(statement, parameters, /, *, context):
     """Validate the fixed selected Events graph before creating its final carrier."""
+    from .catalog import get_statement
+
+    if statement is get_statement("E05"):
+        # Constructor-only normalization under the caller's paid construction
+        # frame. Retained-graph validation never coerces an integer to float.
+        _statement_shape_raw(statement)
+        if type(parameters) is not tuple or len(parameters) != 6:
+            _reject_validation()
+        seconds = parameters[5]
+        if type(seconds) not in (int, float) or not 0 < seconds <= 3600:
+            _reject_validation()
+        parameters = parameters[:5] + (float(seconds),)
     frozen = _freeze_parameters(statement, parameters, context, _reject=_reject_validation)
     request = object.__new__(FrozenRequest)
     object.__setattr__(request, "statement", statement)

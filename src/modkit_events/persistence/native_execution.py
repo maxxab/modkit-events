@@ -167,7 +167,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     value = None
     page_payload_bytes = 0
     previous_work_id = None
-    completion = operation is None and request.statement.key in ("E06", "E08", "E09", "E10", "E11")
+    completion = operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32")
     accumulator = [None] * count if operation is not None or completion else None
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
@@ -276,7 +276,7 @@ def execute(ticket, result, /, *, execution_ledger):
     """Populate the reserved result on the caller root, without finalizing it.
 
     The caller must reserve one result before this call (64 bytes for E14 or
-    4 MiB for every valid E28 row; 64 bytes for E06/E10/E11, 4096 for E08/E09;
+    4 MiB for every valid E28 row; 64 bytes for E05/E06/E10/E11, 4096 for E08/E09;
     Workers uses its retained-ticket capacity).
     Read it through managed read_result after return. Capacity/setter rejection
     after execution is held, not retryable.
@@ -338,15 +338,19 @@ def execute(ticket, result, /, *, execution_ledger):
                     parameters[6],
                     Int8(max_page_payload_bytes),
                 )
-            elif operation is None and request.statement.key in ("E06", "E08", "E09", "E10", "E11"):
+            elif operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32"):
                 from psycopg.types.numeric import Int8BinaryDumper
 
                 cursor.adapters.register_dumper(int, Int8BinaryDumper)
+                if request.statement is get_statement("E05"):
+                    from psycopg.types.numeric import FloatBinaryDumper
+
+                    cursor.adapters.register_dumper(float, FloatBinaryDumper)
                 if request.statement is get_statement("E10"):
                     # A validated unsigned XID needs at most 20 decimal bytes.
                     # Keep the canonical request unchanged; this tuple is D-owned.
                     parameters = parameters[:2] + (str(parameters[2]),) + parameters[3:]
-                elif request.statement is get_statement("E11"):
+                elif request.statement is get_statement("E11") or request.statement is get_statement("E32"):
                     parameters = parameters[:5] + (str(parameters[5]),) + parameters[6:]
             elif max_page_payload_bytes is not None:
                 from psycopg.types.numeric import Int8BinaryDumper

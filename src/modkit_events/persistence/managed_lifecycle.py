@@ -1116,10 +1116,20 @@ def _retained_scalar_size(value, column):
 
 
 def _typed_result_size(request, payload):
-    from .observations import GuardRow
+    from .observations import GuardRow, SettlementObservation
     from .rows import _decode_native_event_result_raw
 
-    if any(request.statement is get_statement(key) for key in ("E06", "E08", "E09", "E10", "E11")):
+    if request.statement is get_statement("E32"):
+        if type(payload) is not SettlementObservation:
+            _reject_validation()
+        columns = request.statement.result.columns
+        values = tuple(getattr(payload, column.name) for column in columns)
+        size = getsizeof(payload) + sum(
+            _retained_scalar_size(value, column) for value, column in zip(values, columns)
+        )
+        _decode_native_event_result_raw(request, (values,))
+        return size
+    if any(request.statement is get_statement(key) for key in ("E05", "E06", "E08", "E09", "E10", "E11")):
         columns = request.statement.result.columns
         if request.statement.key in ("E08", "E09"):
             if payload is None:

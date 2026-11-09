@@ -60,7 +60,7 @@ def _decode_columns_core(columns, values, *, _reject=None):
     if (
         _reject is not None
         and not any(columns is get_statement(key).result.columns
-                    for key in ("E06", "E08", "E09", "E10", "E11", "E14", "E28"))
+                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32"))
     ):
         _reject_scalar(_reject)
     if (
@@ -551,7 +551,7 @@ def _finish_event_rows(spec, items):
 def _decode_event_rows_raw(request, rows):
     """Compose the fixed selected Events row graph without public sanitizers."""
     if type(request) is FrozenRequest and any(
-        request.statement is get_statement(key) for key in ("E06", "E08", "E09", "E10", "E11")
+        request.statement is get_statement(key) for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32")
     ):
         return _decode_native_event_result_raw(request, rows)
     p = _request_raw(request)
@@ -637,7 +637,7 @@ def _decode_native_event_result_raw(request, rows, /):
     if type(request) is not FrozenRequest:
         _reject_validation()
     statement = request.statement
-    key = next((key for key in ("E06", "E08", "E09", "E10", "E11")
+    key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32")
                 if statement is get_statement(key)), None)
     if key is None:
         _reject_validation()
@@ -648,6 +648,8 @@ def _decode_native_event_result_raw(request, rows, /):
     if not rows:
         return None
     values = _decode_columns_raw(statement.result.columns, rows[0])
+    if key == "E05":
+        return values[0]
     if key == "E06":
         _integer_raw(values[0], 1, 1000)
         if values[0] != request.parameters[4] + 1:
@@ -657,6 +659,27 @@ def _decode_native_event_result_raw(request, rows, /):
         if values[0] is not True:
             _reject_validation()
         return True
+    if key == "E32":
+        # Canonical settlement parity: historical receipts need not describe
+        # today's dispatch. Couple the complete immutable request, not W02.
+        _integer_raw(values[3], 1, 2**63 - 1)
+        _integer_raw(values[4], 1, 1)
+        _integer_raw(values[5], 1, 1000)
+        _integer_raw(values[11], 1, 2**63 - 1)
+        if values[11] <= values[3]:
+            _reject_validation()
+        from .bindings import _constraint_raw
+        from .catalog import ConstraintId
+
+        _constraint_raw(values[8], ConstraintId.REASON)
+        positions = (1, 2, 3, 4, 5, 7, 0, 8, 9, 10)
+        if any(values[index] != value
+               for index, value in zip(positions, request.parameters)):
+            _reject_validation()
+        result = object.__new__(O.SettlementObservation)
+        for column, value in zip(statement.result.columns, values):
+            object.__setattr__(result, column.name, value)
+        return result
     result = _decode_guard_raw(values)
     if result.satisfied or any(
         getattr(result, name) != value

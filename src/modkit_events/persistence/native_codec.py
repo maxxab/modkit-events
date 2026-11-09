@@ -34,6 +34,30 @@ class _SqlDescriptor:
     max_admitted_cell_payload_bytes: int
 
 
+_E05_SQL = b"""WITH source AS MATERIALIZED (
+    SELECT s.lease_until
+    FROM modkit_events.e05($1::pg_catalog.uuid, $2::pg_catalog.uuid, $3::pg_catalog.int8, $4::pg_catalog.int4, $5::pg_catalog.int4, $6::pg_catalog.float8) AS s
+)
+SELECT TRUE::pg_catalog.bool AS cap_ok, s.lease_until
+FROM source AS s
+LIMIT 2"""
+_E05 = _SqlDescriptor(
+    sql=_E05_SQL,
+    parameter_casts=("pg_catalog.uuid", "pg_catalog.uuid", "pg_catalog.int8",
+                     "pg_catalog.int4", "pg_catalog.int4", "pg_catalog.float8"),
+    canonical_columns=get_statement("E05").result.columns,
+    transport_columns=(
+        _TransportColumn(name="cap_ok", wire_type=WireType.BOOL, oid=16,
+                         nullable=False, max_payload_bytes=1),
+        _TransportColumn(name="lease_until", wire_type=WireType.TIMESTAMPTZ, oid=1184,
+                         nullable=False, max_payload_bytes=8),
+    ),
+    cardinality=CardinalityKind.EXACT_ONE,
+    sentinel_limit=2,
+    max_admitted_cell_payload_bytes=9,
+)
+
+
 _E14_SQL = b"""WITH source AS MATERIALIZED (
     SELECT s.root_xid
     FROM modkit_events.e14() AS s
@@ -1913,6 +1937,56 @@ _W05_COLUMNS = (
 )
 
 
+# Fixed E32 transport: cap variable cells before PGresult materialization.
+_E32_SQL = b"""WITH source AS MATERIALIZED (
+    SELECT s.operation_id, s.work_id, s.token, s.expected_revision, s.cycle, s.attempt, s.dispatch_id, s.failed_business_root, s.reason, s.evidence, s.binding, s.resulting_revision, s.recorded_at
+    FROM modkit_events.e32($1::pg_catalog.uuid, $2::pg_catalog.uuid, $3::pg_catalog.int8, $4::pg_catalog.int4, $5::pg_catalog.int4, $6::pg_catalog.text::pg_catalog.xid8, $7::pg_catalog.uuid, $8::pg_catalog.text, $9::pg_catalog.bytea, $10::pg_catalog.bytea) AS s
+), checked AS (
+    SELECT s.*, (
+        (s.reason IS NOT NULL AND pg_catalog.octet_length(pg_catalog.convert_to(s.reason, 'UTF8')) OPERATOR(pg_catalog.<=) 256)
+        AND (s.evidence IS NOT NULL AND pg_catalog.octet_length(s.evidence) OPERATOR(pg_catalog.<=) 1048576)
+        AND (s.binding IS NOT NULL AND pg_catalog.octet_length(s.binding) OPERATOR(pg_catalog.<=) 1048576)
+    ) IS TRUE AS cap_ok
+    FROM source AS s
+)
+SELECT c.cap_ok, c.operation_id, c.work_id, c.token, c.expected_revision,
+       c.cycle, c.attempt, c.dispatch_id, c.failed_business_root,
+       CASE WHEN c.cap_ok THEN pg_catalog.convert_to(c.reason, 'UTF8') ELSE NULL::pg_catalog.bytea END AS reason,
+       CASE WHEN c.cap_ok THEN c.evidence ELSE NULL::pg_catalog.bytea END AS evidence,
+       CASE WHEN c.cap_ok THEN c.binding ELSE NULL::pg_catalog.bytea END AS binding,
+       c.resulting_revision, c.recorded_at
+FROM checked AS c
+LIMIT 2"""
+
+_E32_COLUMNS = (
+    _E14.transport_columns[0],
+    _TransportColumn(name="operation_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
+    _TransportColumn(name="work_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
+    _TransportColumn(name="token", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
+    _TransportColumn(name="expected_revision", wire_type=WireType.INT8, oid=20, nullable=False, max_payload_bytes=8),
+    _TransportColumn(name="cycle", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4),
+    _TransportColumn(name="attempt", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4),
+    _TransportColumn(name="dispatch_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
+    _TransportColumn(name="failed_business_root", wire_type=WireType.XID8, oid=5069, nullable=False, max_payload_bytes=8),
+    _TransportColumn(name="reason", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=256),
+    _TransportColumn(name="evidence", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576),
+    _TransportColumn(name="binding", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576),
+    _TransportColumn(name="resulting_revision", wire_type=WireType.INT8, oid=20, nullable=False, max_payload_bytes=8),
+    _TransportColumn(name="recorded_at", wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=False, max_payload_bytes=8),
+)
+_E32 = _SqlDescriptor(
+    sql=_E32_SQL,
+    parameter_casts=("pg_catalog.uuid", "pg_catalog.uuid", "pg_catalog.int8",
+                    "pg_catalog.int4", "pg_catalog.int4", "pg_catalog.text",
+                    "pg_catalog.uuid", "pg_catalog.text", "pg_catalog.bytea", "pg_catalog.bytea"),
+    canonical_columns=get_statement("E32").result.columns,
+    transport_columns=_E32_COLUMNS,
+    cardinality=CardinalityKind.EXACT_ONE,
+    sentinel_limit=2,
+    max_admitted_cell_payload_bytes=sum(c.max_payload_bytes for c in _E32_COLUMNS),
+)
+
+
 def _selected_sql_descriptor(
     spec: StatementSpec, operation=None, *, request=None, max_page_payload_bytes=None
 ) -> _SqlDescriptor:
@@ -1999,6 +2073,8 @@ def _selected_sql_descriptor(
     _statement_shape_raw(spec)
     if max_page_payload_bytes is not None:
         _reject_validation()
+    if spec is get_statement("E05"):
+        return _E05
     if spec is get_statement("E14"):
         return _E14
     if spec is get_statement("E28"):
@@ -2013,6 +2089,8 @@ def _selected_sql_descriptor(
         return _E10
     if spec is get_statement("E11"):
         return _E11
+    if spec is get_statement("E32"):
+        return _E32
     _reject_validation()
 
 
