@@ -1123,7 +1123,7 @@ def _retained_scalar_size(value, column):
 
 
 def _typed_result_size(request, payload):
-    from .observations import GuardRow, SettlementObservation
+    from .observations import GuardRow, ResolutionObservation, SettlementObservation
     from .rows import _decode_native_event_result_raw
 
     if request.statement is get_statement("E33"):
@@ -1155,8 +1155,9 @@ def _typed_result_size(request, payload):
         if decoded != request.context.readiness.components:
             _reject_validation()
         return size
-    if request.statement is get_statement("E32"):
-        if type(payload) is not SettlementObservation:
+    if request.statement is get_statement("E31") or request.statement is get_statement("E32"):
+        carrier = ResolutionObservation if request.statement is get_statement("E31") else SettlementObservation
+        if type(payload) is not carrier:
             _reject_validation()
         columns = request.statement.result.columns
         values = tuple(getattr(payload, column.name) for column in columns)

@@ -1108,7 +1108,7 @@ def _statement_shape_raw(statement):
         _reject_validation()
     from . import catalog
 
-    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32", "E33")
+    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E31", "E32", "E33")
                          if statement is catalog.get_statement(key)), None)
     if expected_key is None:
         _reject_validation()
@@ -1314,12 +1314,19 @@ def _constraint_raw(value, code):
             _reject_validation()
         return
     bounds = {"ownership_revision": (1, 2**63 - 1), "cycle": (1, 1),
-              "expected_attempt": (0, 1000)}
+              "expected_attempt": (0, 1000), "expected_revision": (0, 2**63 - 1),
+              "attempt": (1, 1000)}
     if code.value in bounds:
         _integer_raw(value, *bounds[code.value])
         return
     if code.value == "lease_seconds":
         if type(value) is not float or not math.isfinite(value) or not 0 < value <= 3600:
+            _reject_validation()
+        return
+    if code.value == "resolution_outcome":
+        if type(value) is not str or value not in (
+            "confirmed_success", "confirmed_rejection", "confirmed_cancelled", "safe_retry"
+        ):
             _reject_validation()
         return
     if code.value == "failure_outcome":

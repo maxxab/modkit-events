@@ -146,7 +146,7 @@ def test_selected_plan_and_column_metadata_are_immutable(key):
 
 
 @pytest.mark.parametrize(
-    "key", [f"E{i:02}" for i in range(1, 35) if i not in (5, 6, 8, 9, 10, 11, 14, 28, 32, 33)]
+    "key", [f"E{i:02}" for i in range(1, 35) if i not in (5, 6, 8, 9, 10, 11, 14, 28, 31, 32, 33)]
 )
 def test_every_unselected_event_spec_refuses_a_descriptor(key):
     assert type(capture(lambda: select(C.get_statement(key)))) is E._ValidationReject

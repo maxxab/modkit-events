@@ -101,6 +101,49 @@ def prepare(
     return preparation
 
 
+def prepare_resolution(
+    execution, /, *, execution_ledger, capacity, work_id, expected_revision,
+    cycle, attempt, dispatch_id, operation_id, outcome, retry_at=None,
+    result=None, evidence, binding,
+):
+    """Reserve before building E31's composite graph; never issue or finalize."""
+    flag = _managed._context(execution_ledger)
+    _managed._require_handles(flag, execution)
+    _managed._size(capacity, flag)
+    with _managed._construction(flag) as paid:
+        preparation, code = _managed._reserve_preparation_paid(
+            execution, capacity, execution_ledger, paid
+        )
+        reserved = code is None
+        request = None
+        if reserved:
+            try:
+                request = _freeze_request_raw(
+                    get_statement("E31"),
+                    (work_id, expected_revision, cycle, attempt, dispatch_id,
+                     operation_id, outcome, retry_at, result, evidence, binding),
+                    context=_return_context_raw(),
+                )
+            except _ValidationReject as error:
+                if type(error) is not _ValidationReject:
+                    raise
+                code = ErrorCode.LOCAL_INVALID_ARGUMENT
+            if code is None:
+                code = _managed._set_preparation_paid(
+                    preparation, request, execution_ledger, paid, unreturned=True
+                )
+        request = None
+        if code is not None:
+            if reserved:
+                cleanup_code = _managed._release_preparation_paid(
+                    preparation, execution_ledger, paid, unreturned=True
+                )
+                _managed._reject(cleanup_code, flag)
+            preparation = None
+    _managed._reject(code, flag)
+    return preparation
+
+
 def prepare_readiness(
     execution, required_profile: str, expectation: ReadinessExpectation, /, *,
     execution_ledger, capacity: int = 4096,
@@ -221,7 +264,7 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     value = None
     page_payload_bytes = 0
     previous_work_id = None
-    completion = operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32")
+    completion = operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
     accumulator = [None] * count if operation is not None or completion or readiness else None
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
@@ -403,7 +446,7 @@ def execute(ticket, result, /, *, execution_ledger):
                     parameters[6],
                     Int8(max_page_payload_bytes),
                 )
-            elif operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32"):
+            elif operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32"):
                 from psycopg.types.numeric import Int8BinaryDumper
 
                 cursor.adapters.register_dumper(int, Int8BinaryDumper)

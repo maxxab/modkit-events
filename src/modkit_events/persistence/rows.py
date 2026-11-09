@@ -60,7 +60,7 @@ def _decode_columns_core(columns, values, *, _reject=None):
     if (
         _reject is not None
         and not any(columns is get_statement(key).result.columns
-                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E32", "E33"))
+                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E14", "E28", "E31", "E32", "E33"))
     ):
         _reject_scalar(_reject)
     if (
@@ -551,7 +551,7 @@ def _finish_event_rows(spec, items):
 def _decode_event_rows_raw(request, rows):
     """Compose the fixed selected Events row graph without public sanitizers."""
     if type(request) is FrozenRequest and any(
-        request.statement is get_statement(key) for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32")
+        request.statement is get_statement(key) for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
     ):
         return _decode_native_event_result_raw(request, rows)
     p = _request_raw(request)
@@ -637,7 +637,7 @@ def _decode_native_event_result_raw(request, rows, /):
     if type(request) is not FrozenRequest:
         _reject_validation()
     statement = request.statement
-    key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E32")
+    key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
                 if statement is get_statement(key)), None)
     if key is None:
         _reject_validation()
@@ -659,6 +659,15 @@ def _decode_native_event_result_raw(request, rows, /):
         if values[0] is not True:
             _reject_validation()
         return True
+    if key == "E31":
+        # Historical receipts retain their original root and immutable request.
+        positions = (2, 3, 4, 5, 6, 0, 7, 8, 9, 12, 13)
+        if any(values[index] != value
+               for index, value in zip(positions, request.parameters)):
+            _reject_validation()
+        return O._resolution_observation_raw(**dict(
+            zip((column.name for column in statement.result.columns), values)
+        ))
     if key == "E32":
         # Canonical settlement parity: historical receipts need not describe
         # today's dispatch. Couple the complete immutable request, not W02.

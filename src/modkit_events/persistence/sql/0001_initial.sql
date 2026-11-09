@@ -7856,3 +7856,429 @@ BEGIN
 END
 $body$;
 REVOKE ALL ON FUNCTION modkit_events.e33(pg_catalog.text) FROM PUBLIC;
+
+-- E31: evidence-authorized already-held resolution; caller owns finalization.
+CREATE FUNCTION modkit_events.e31(
+    p_work_id pg_catalog.uuid,
+    p_expected_revision pg_catalog.int8,
+    p_cycle pg_catalog.int4,
+    p_attempt pg_catalog.int4,
+    p_dispatch_id pg_catalog.uuid,
+    p_operation_id pg_catalog.uuid,
+    p_outcome pg_catalog.text,
+    p_retry_at pg_catalog.timestamptz,
+    p_result pg_catalog.bytea,
+    p_evidence pg_catalog.bytea,
+    p_binding pg_catalog.bytea
+)
+RETURNS TABLE(
+    operation_id pg_catalog.uuid,
+    operation_kind pg_catalog.text,
+    work_id pg_catalog.uuid,
+    expected_revision pg_catalog.int8,
+    cycle pg_catalog.int4,
+    attempt pg_catalog.int4,
+    dispatch_id pg_catalog.uuid,
+    outcome pg_catalog.text,
+    retry_at pg_catalog.timestamptz,
+    result pg_catalog.bytea,
+    result_digest pg_catalog.bytea,
+    reason pg_catalog.text,
+    evidence pg_catalog.bytea,
+    binding pg_catalog.bytea,
+    resolution_root_xid pg_catalog.xid8,
+    recorded_at pg_catalog.timestamptz
+)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE
+    discovered pg_catalog.record;
+    captured pg_catalog.record;
+    w modkit_events.work%ROWTYPE;
+    fresh_work modkit_events.work%ROWTYPE;
+    expected_work modkit_events.work%ROWTYPE;
+    updated_work modkit_events.work%ROWTYPE;
+    subscription_row modkit_events.subscriptions%ROWTYPE;
+    updated_parent modkit_events.subscriptions%ROWTYPE;
+    expected_parent modkit_events.subscriptions%ROWTYPE;
+    locked_attempt modkit_events.attempts%ROWTYPE;
+    attempt_row modkit_events.attempts%ROWTYPE;
+    expected_attempt modkit_events.attempts%ROWTYPE;
+    updated_attempt modkit_events.attempts%ROWTYPE;
+    operation_row modkit_events.mutation_operations%ROWTYPE;
+    expected_operation modkit_events.mutation_operations%ROWTYPE;
+    history_row modkit_events.work_history%ROWTYPE;
+    updated_history modkit_events.work_history%ROWTYPE;
+    updated_operation modkit_events.mutation_operations%ROWTYPE;
+    transition_code pg_catalog.text;
+    is_job pg_catalog.bool;
+    operation_found pg_catalog.bool;
+    created_operation pg_catalog.bool:=FALSE;
+    actual_root pg_catalog.xid8;
+    record_time pg_catalog.timestamptz;
+    authority_time pg_catalog.timestamptz;
+    affected pg_catalog.int8;
+BEGIN
+    IF pg_catalog.current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RAISE EXCEPTION USING ERRCODE='PZ005',MESSAGE='unsupported transaction isolation';
+    END IF;
+    IF p_work_id IS NULL OR p_expected_revision IS NULL OR p_expected_revision<0
+       OR p_cycle IS DISTINCT FROM 1 OR p_attempt IS NULL OR p_attempt NOT BETWEEN 1 AND 1000
+       OR p_dispatch_id IS NULL OR p_operation_id IS NULL
+       OR (p_outcome COLLATE pg_catalog."C" IN
+           ('confirmed_success','confirmed_rejection','confirmed_cancelled','safe_retry')) IS NOT TRUE
+       OR (p_outcome COLLATE pg_catalog."C"='safe_retry') IS DISTINCT FROM (p_retry_at IS NOT NULL)
+       OR (p_outcome COLLATE pg_catalog."C"='confirmed_success') IS DISTINCT FROM (p_result IS NOT NULL)
+       OR (p_retry_at IS NOT NULL AND modkit_events._instant_bytes(p_retry_at) IS NULL)
+       OR (p_result IS NOT NULL AND pg_catalog.octet_length(p_result)>1048576)
+       OR p_evidence IS NULL OR pg_catalog.octet_length(p_evidence)>1048576
+       OR p_binding IS NULL OR pg_catalog.octet_length(p_binding)>1048576 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ006',MESSAGE='invalid resolution arguments';
+    END IF;
+    SELECT observed.*,pg_catalog.count(*) OVER () AS selected_count INTO discovered
+      FROM modkit_events.e15(p_work_id) AS observed;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='missing resolution work';
+    END IF;
+    IF discovered.selected_count IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution discovery cardinality';
+    END IF;
+    is_job := discovered.kind COLLATE pg_catalog."C" = 'job';
+    IF NOT is_job THEN
+        PERFORM parent.subscription_id FROM modkit_events.subscriptions AS parent
+          WHERE parent.subscription_id=discovered.subscription_id FOR NO KEY UPDATE OF parent;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing work subscription';
+        END IF;
+    END IF;
+    PERFORM stored.work_id FROM modkit_events.work AS stored
+      WHERE stored.work_id=p_work_id FOR NO KEY UPDATE OF stored;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='missing resolution work';
+    END IF;
+    -- New command snapshot after the blocking Work acquisition.
+    SELECT stored.* INTO w FROM modkit_events.work AS stored WHERE stored.work_id=p_work_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='missing resolution work';
+    END IF;
+    IF w.work_id IS DISTINCT FROM discovered.work_id
+       OR pg_catalog.convert_to(w.kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(discovered.kind,'UTF8')
+       OR w.subscription_id IS DISTINCT FROM discovered.subscription_id THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='work identity changed during acquisition';
+    END IF;
+    IF w.dispatch_id IS NOT NULL THEN
+        PERFORM current_attempt.work_id FROM modkit_events.attempts AS current_attempt
+          WHERE current_attempt.work_id=w.work_id AND current_attempt.cycle=w.cycle
+            AND current_attempt.attempt=w.attempt_count AND current_attempt.dispatch_id=w.dispatch_id
+          FOR NO KEY UPDATE OF current_attempt;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing current dispatch';
+        END IF;
+        SELECT current_attempt.* INTO locked_attempt FROM modkit_events.attempts AS current_attempt
+          WHERE current_attempt.work_id=w.work_id AND current_attempt.cycle=w.cycle
+            AND current_attempt.attempt=w.attempt_count AND current_attempt.dispatch_id=w.dispatch_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing locked dispatch';
+        END IF;
+    END IF;
+
+    -- E15 and all preimages share one fresh snapshot after every blocking lock.
+    SELECT stored AS current_work,parent AS current_parent,current_attempt AS current_dispatch,
+           checked.*,pg_catalog.count(*) OVER () AS selected_count
+      INTO captured
+      FROM modkit_events.work AS stored
+      CROSS JOIN LATERAL modkit_events.e15(stored.work_id) AS checked
+      LEFT JOIN modkit_events.subscriptions AS parent ON parent.subscription_id=stored.subscription_id
+      LEFT JOIN modkit_events.attempts AS current_attempt
+        ON current_attempt.work_id=stored.work_id AND current_attempt.cycle=stored.cycle
+          AND current_attempt.attempt=stored.attempt_count AND current_attempt.dispatch_id=stored.dispatch_id
+      WHERE stored.work_id=p_work_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing full resolution observation';
+    END IF;
+    IF captured.selected_count IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid full resolution cardinality';
+    END IF;
+    fresh_work := captured.current_work;
+    subscription_row := captured.current_parent;
+    attempt_row := captured.current_dispatch;
+    IF fresh_work IS DISTINCT FROM w
+       OR pg_catalog.convert_to(fresh_work.kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(w.kind,'UTF8')
+       OR pg_catalog.convert_to(fresh_work.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(w.state,'UTF8')
+       OR pg_catalog.convert_to(fresh_work.replay_policy,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(w.replay_policy,'UTF8')
+       OR captured.work_id IS DISTINCT FROM w.work_id THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='work changed under held locks';
+    END IF;
+    w := fresh_work;
+    IF w.dispatch_id IS NOT NULL AND (
+       attempt_row.work_id IS DISTINCT FROM w.work_id OR attempt_row.cycle IS DISTINCT FROM w.cycle
+       OR attempt_row.attempt IS DISTINCT FROM w.attempt_count OR attempt_row.dispatch_id IS DISTINCT FROM w.dispatch_id
+       OR attempt_row IS DISTINCT FROM locked_attempt
+       OR pg_catalog.convert_to(attempt_row.outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(locked_attempt.outcome,'UTF8')) THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='dispatch changed under held locks';
+    END IF;
+
+    SELECT stored.* INTO operation_row FROM modkit_events.mutation_operations AS stored
+      WHERE stored.operation_id=p_operation_id;
+    operation_found := FOUND;
+    -- At most two passes: an existing receipt, or one INSERT and its receipt.
+    -- No statement/transaction retry. A unique loser reads fresh committed bytes.
+    LOOP
+        IF operation_found THEN
+            IF (operation_row.operation_kind COLLATE pg_catalog."C" IN
+                ('repair_publication','reconcile_work','hold_uncertain')) IS NOT TRUE THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution operation kind';
+            END IF;
+            IF pg_catalog.convert_to(operation_row.operation_kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to('reconcile_work','UTF8') THEN
+                RAISE EXCEPTION USING ERRCODE='PZ002',MESSAGE='resolution operation kind conflict';
+            END IF;
+            IF operation_row.operation_id IS DISTINCT FROM p_operation_id OR operation_row.work_id IS NULL
+               OR operation_row.expected_revision IS NULL OR operation_row.expected_revision<0
+               OR operation_row.expected_revision=9223372036854775807::pg_catalog.int8
+               OR operation_row.cycle IS DISTINCT FROM 1 OR operation_row.attempt IS NULL
+               OR operation_row.attempt NOT BETWEEN 1 AND 1000 OR operation_row.dispatch_id IS NULL
+               OR operation_row.event_id IS NOT NULL OR operation_row.event_digest IS NOT NULL
+               OR operation_row.token IS NOT NULL OR operation_row.failed_business_root IS NOT NULL
+               OR operation_row.requested_receipt IS NOT NULL OR operation_row.requested_reason IS NOT NULL
+               OR operation_row.resulting_revision IS NOT NULL
+               OR operation_row.resolution_root_xid IS NULL OR operation_row.resolution_root_xid<='0'::pg_catalog.xid8
+               OR operation_row.evidence IS NULL OR pg_catalog.octet_length(operation_row.evidence)>1048576
+               OR operation_row.binding IS NULL OR pg_catalog.octet_length(operation_row.binding)>1048576
+               OR modkit_events._instant_bytes(operation_row.recorded_at) IS NULL
+               OR (operation_row.requested_outcome COLLATE pg_catalog."C" IN
+                   ('confirmed_success','confirmed_rejection','confirmed_cancelled','safe_retry')) IS NOT TRUE
+               OR (operation_row.requested_outcome COLLATE pg_catalog."C"='safe_retry') IS DISTINCT FROM (operation_row.retry_at IS NOT NULL)
+               OR (operation_row.retry_at IS NOT NULL AND modkit_events._instant_bytes(operation_row.retry_at) IS NULL)
+               OR (operation_row.requested_outcome COLLATE pg_catalog."C"='safe_retry' AND operation_row.attempt=1000)
+               OR (operation_row.requested_outcome COLLATE pg_catalog."C"='confirmed_success'
+                   AND (operation_row.requested_result IS NULL OR pg_catalog.octet_length(operation_row.requested_result)>1048576
+                        OR operation_row.result_digest IS NULL
+                        OR operation_row.result_digest IS DISTINCT FROM pg_catalog.sha256(operation_row.requested_result)))
+               OR (operation_row.requested_outcome COLLATE pg_catalog."C"<>'confirmed_success'
+                   AND (operation_row.requested_result IS NOT NULL OR operation_row.result_digest IS NOT NULL)) THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution operation';
+            END IF;
+            IF operation_row.work_id IS DISTINCT FROM p_work_id
+               OR operation_row.expected_revision IS DISTINCT FROM p_expected_revision
+               OR operation_row.cycle IS DISTINCT FROM p_cycle OR operation_row.attempt IS DISTINCT FROM p_attempt
+               OR operation_row.dispatch_id IS DISTINCT FROM p_dispatch_id
+               OR pg_catalog.convert_to(operation_row.requested_outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(p_outcome,'UTF8')
+               OR operation_row.retry_at IS DISTINCT FROM p_retry_at
+               OR operation_row.requested_result IS DISTINCT FROM p_result
+               OR operation_row.evidence IS DISTINCT FROM p_evidence OR operation_row.binding IS DISTINCT FROM p_binding THEN
+                RAISE EXCEPTION USING ERRCODE='PZ002',MESSAGE='resolution operation conflict';
+            END IF;
+            IF NOT created_operation THEN
+                -- Historical receipt, not a statement about today's dispatch/fence.
+                RETURN QUERY SELECT operation_row.operation_id,operation_row.operation_kind,operation_row.work_id,
+                    operation_row.expected_revision,operation_row.cycle,operation_row.attempt,operation_row.dispatch_id,
+                    operation_row.requested_outcome,operation_row.retry_at,operation_row.requested_result,
+                    operation_row.result_digest,operation_row.requested_reason,operation_row.evidence,operation_row.binding,
+                    operation_row.resolution_root_xid,operation_row.recorded_at;
+                RETURN;
+            END IF;
+            IF operation_row IS DISTINCT FROM expected_operation
+               OR pg_catalog.convert_to(operation_row.operation_kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_operation.operation_kind,'UTF8')
+               OR pg_catalog.convert_to(operation_row.requested_outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_operation.requested_outcome,'UTF8') THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='resolution operation postimage mismatch';
+            END IF;
+            EXIT;
+        END IF;
+
+        IF w.ownership_revision IS DISTINCT FROM p_expected_revision OR w.cycle IS DISTINCT FROM p_cycle
+           OR w.attempt_count IS DISTINCT FROM p_attempt OR w.dispatch_id IS DISTINCT FROM p_dispatch_id THEN
+            RAISE EXCEPTION USING ERRCODE='PZ003',MESSAGE='stale resolution fence';
+        END IF;
+        IF w.state COLLATE pg_catalog."C"<>'held' THEN
+            RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='resolution requires held work';
+        END IF;
+        IF w.ownership_revision=9223372036854775807::pg_catalog.int8 THEN
+            RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='ownership revision exhausted';
+        END IF;
+        IF NOT is_job AND subscription_row.nonterminal_count<=0 THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid nonterminal parent count';
+        END IF;
+        -- The union forbids attempt1000 retries: reject before provisional insertion.
+        IF p_outcome COLLATE pg_catalog."C"='safe_retry' AND p_attempt=1000 THEN
+            RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='unsafe resolution retry';
+        END IF;
+        actual_root := pg_catalog.pg_current_xact_id();
+        record_time := pg_catalog.clock_timestamp();
+        IF actual_root<='0'::pg_catalog.xid8 OR modkit_events._instant_bytes(record_time) IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution root or record time';
+        END IF;
+        expected_operation.operation_id := p_operation_id;
+        expected_operation.operation_kind := 'reconcile_work';
+        expected_operation.work_id := p_work_id;
+        expected_operation.expected_revision := p_expected_revision;
+        expected_operation.cycle := p_cycle;
+        expected_operation.attempt := p_attempt;
+        expected_operation.dispatch_id := p_dispatch_id;
+        expected_operation.requested_outcome := p_outcome;
+        expected_operation.retry_at := p_retry_at;
+        expected_operation.requested_result := p_result;
+        expected_operation.result_digest := pg_catalog.sha256(p_result);
+        expected_operation.evidence := p_evidence;
+        expected_operation.binding := p_binding;
+        expected_operation.resolution_root_xid := actual_root;
+        expected_operation.recorded_at := record_time;
+        INSERT INTO modkit_events.mutation_operations AS stored
+            (operation_id,operation_kind,work_id,expected_revision,cycle,attempt,dispatch_id,
+             requested_outcome,retry_at,requested_result,result_digest,evidence,binding,resolution_root_xid,recorded_at)
+            VALUES(p_operation_id,'reconcile_work',p_work_id,p_expected_revision,p_cycle,p_attempt,p_dispatch_id,
+                p_outcome,p_retry_at,p_result,pg_catalog.sha256(p_result),p_evidence,p_binding,actual_root,record_time)
+            ON CONFLICT ON CONSTRAINT mutation_operations_pkey DO NOTHING
+            RETURNING stored.* INTO operation_row;
+        GET DIAGNOSTICS affected=ROW_COUNT;
+        IF affected NOT IN (0,1) THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution operation insertion';
+        END IF;
+        created_operation := affected=1;
+        IF NOT created_operation THEN
+            SELECT stored.* INTO operation_row FROM modkit_events.mutation_operations AS stored
+              WHERE stored.operation_id=p_operation_id;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing conflicting resolution operation';
+            END IF;
+        END IF;
+        operation_found := TRUE;
+    END LOOP;
+
+    -- Every insertion winner reaches this AFTER unique arbitration, including a
+    -- waiter whose conflicting insertion rolled back. Expiry aborts the entire
+    -- call, including the provisional immutable receipt. Do not catch/replay.
+    authority_time := pg_catalog.clock_timestamp();
+    IF modkit_events._instant_bytes(authority_time) IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution authority time';
+    END IF;
+    IF p_outcome COLLATE pg_catalog."C"='safe_retry' THEN
+        IF w.deadline IS NOT NULL AND authority_time>=w.deadline THEN
+            RAISE EXCEPTION USING ERRCODE='PZ009',MESSAGE='work deadline reached';
+        END IF;
+        IF w.replay_policy COLLATE pg_catalog."C"<>'application_safe'
+           OR w.attempt_count>=w.max_attempts OR w.attempt_count>=1000 OR w.cancellation_requested
+           OR p_retry_at<=authority_time OR (w.deadline IS NOT NULL AND p_retry_at>=w.deadline) THEN
+            RAISE EXCEPTION USING ERRCODE='PZ004',MESSAGE='unsafe resolution retry';
+        END IF;
+    END IF;
+    expected_work := w;
+    expected_work.state := CASE p_outcome COLLATE pg_catalog."C"
+        WHEN 'confirmed_success' THEN 'succeeded' WHEN 'confirmed_rejection' THEN 'failed'
+        WHEN 'confirmed_cancelled' THEN 'cancelled' ELSE 'retry_waiting' END;
+    transition_code := CASE p_outcome COLLATE pg_catalog."C"
+        WHEN 'confirmed_success' THEN 'reconcile_success' WHEN 'confirmed_rejection' THEN 'reconcile_rejection'
+        WHEN 'confirmed_cancelled' THEN 'reconcile_cancelled' ELSE 'reconcile_safe_retry' END;
+    expected_work.token := NULL;
+    expected_work.lease_until := NULL;
+    expected_work.ownership_revision := w.ownership_revision+1;
+    expected_work.updated_at := record_time;
+    IF p_outcome COLLATE pg_catalog."C"='safe_retry' THEN
+        expected_work.dispatch_id := NULL;
+        expected_work.available_at := p_retry_at;
+    ELSE
+        expected_work.terminal_resolution_operation_id := p_operation_id;
+    END IF;
+    IF p_outcome COLLATE pg_catalog."C"='confirmed_success' THEN
+        expected_work.success_origin := 'reconciled';
+        expected_work.result := p_result;
+        expected_work.resolution_operation_id := p_operation_id;
+    END IF;
+    expected_attempt := attempt_row;
+    expected_attempt.outcome := CASE p_outcome COLLATE pg_catalog."C"
+        WHEN 'safe_retry' THEN 'safe_retry' ELSE expected_work.state END;
+    expected_attempt.evidence := p_evidence;
+    UPDATE modkit_events.attempts AS stored SET outcome=expected_attempt.outcome,evidence=p_evidence
+      WHERE stored.work_id=w.work_id AND stored.cycle=w.cycle
+        AND stored.attempt=w.attempt_count AND stored.dispatch_id=w.dispatch_id
+      RETURNING stored.* INTO updated_attempt;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 OR updated_attempt IS DISTINCT FROM expected_attempt
+       OR pg_catalog.convert_to(updated_attempt.outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_attempt.outcome,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='resolution dispatch postimage mismatch';
+    END IF;
+    UPDATE modkit_events.work AS stored SET state=expected_work.state,token=NULL,lease_until=NULL,
+        ownership_revision=expected_work.ownership_revision,updated_at=record_time,
+        dispatch_id=expected_work.dispatch_id,available_at=expected_work.available_at,
+        result=expected_work.result,success_origin=expected_work.success_origin,
+        resolution_operation_id=expected_work.resolution_operation_id,
+        terminal_resolution_operation_id=expected_work.terminal_resolution_operation_id
+      WHERE stored.work_id=p_work_id RETURNING stored.* INTO updated_work;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 OR updated_work IS DISTINCT FROM expected_work
+       OR pg_catalog.convert_to(updated_work.kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.kind,'UTF8')
+       OR pg_catalog.convert_to(updated_work.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.state,'UTF8')
+       OR pg_catalog.convert_to(updated_work.replay_policy,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.replay_policy,'UTF8')
+       OR pg_catalog.convert_to(updated_work.success_origin,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.success_origin,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='resolution work postimage mismatch';
+    END IF;
+    expected_parent := subscription_row;
+    IF NOT is_job AND p_outcome COLLATE pg_catalog."C"<>'safe_retry' THEN
+        expected_parent.nonterminal_count := subscription_row.nonterminal_count-1;
+        UPDATE modkit_events.subscriptions AS parent SET nonterminal_count=expected_parent.nonterminal_count
+          WHERE parent.subscription_id=w.subscription_id RETURNING parent.* INTO updated_parent;
+        GET DIAGNOSTICS affected=ROW_COUNT;
+        IF affected<>1 OR updated_parent IS DISTINCT FROM expected_parent THEN
+            RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='resolution parent postimage mismatch';
+        END IF;
+    END IF;
+    INSERT INTO modkit_events.work_history AS stored
+        (work_id,cycle,attempt,transition,reason,token,ownership_revision,evidence,recorded_at)
+      VALUES(updated_work.work_id,updated_work.cycle,updated_work.attempt_count,transition_code,
+             transition_code,NULL,updated_work.ownership_revision,p_evidence,record_time)
+      RETURNING stored.* INTO history_row;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 OR history_row.history_id IS NULL OR history_row.history_id<=0
+       OR history_row.work_id IS DISTINCT FROM updated_work.work_id
+       OR history_row.cycle IS DISTINCT FROM updated_work.cycle
+       OR history_row.attempt IS DISTINCT FROM updated_work.attempt_count
+       OR pg_catalog.convert_to(history_row.transition,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(transition_code,'UTF8')
+       OR pg_catalog.convert_to(history_row.reason,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(transition_code,'UTF8')
+       OR history_row.token IS NOT NULL
+       OR history_row.ownership_revision IS DISTINCT FROM updated_work.ownership_revision
+       OR history_row.evidence IS DISTINCT FROM p_evidence
+       OR history_row.recorded_at IS DISTINCT FROM record_time THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution history receipt';
+    END IF;
+    SELECT stored AS current_work,parent AS current_parent,current_attempt AS current_dispatch,
+           checked.*,pg_catalog.count(*) OVER () AS selected_count INTO captured
+      FROM modkit_events.work AS stored
+      CROSS JOIN LATERAL modkit_events.e15(stored.work_id) AS checked
+      LEFT JOIN modkit_events.subscriptions AS parent ON parent.subscription_id=stored.subscription_id
+      LEFT JOIN modkit_events.attempts AS current_attempt ON current_attempt.work_id=stored.work_id
+        AND current_attempt.cycle=stored.cycle AND current_attempt.attempt=stored.attempt_count
+      WHERE stored.work_id=p_work_id;
+    IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='missing resolution poststate'; END IF;
+    fresh_work := captured.current_work;
+    locked_attempt := captured.current_dispatch;
+    updated_parent := captured.current_parent;
+    IF captured.selected_count IS DISTINCT FROM 1 OR fresh_work IS DISTINCT FROM expected_work
+       OR pg_catalog.convert_to(fresh_work.state,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.state,'UTF8')
+       OR pg_catalog.convert_to(fresh_work.kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.kind,'UTF8')
+       OR pg_catalog.convert_to(fresh_work.replay_policy,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.replay_policy,'UTF8')
+       OR pg_catalog.convert_to(fresh_work.success_origin,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_work.success_origin,'UTF8')
+       OR locked_attempt IS DISTINCT FROM expected_attempt
+       OR pg_catalog.convert_to(locked_attempt.outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_attempt.outcome,'UTF8')
+       OR (NOT is_job AND updated_parent IS DISTINCT FROM expected_parent) THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='invalid resolution poststate';
+    END IF;
+    SELECT stored.* INTO updated_history FROM modkit_events.work_history AS stored
+      WHERE stored.history_id=history_row.history_id;
+    IF NOT FOUND OR updated_history IS DISTINCT FROM history_row
+       OR pg_catalog.convert_to(updated_history.transition,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(history_row.transition,'UTF8')
+       OR pg_catalog.convert_to(updated_history.reason,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(history_row.reason,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='resolution history changed after mutation';
+    END IF;
+    SELECT stored.* INTO updated_operation FROM modkit_events.mutation_operations AS stored WHERE stored.operation_id=p_operation_id;
+    IF NOT FOUND OR updated_operation IS DISTINCT FROM expected_operation
+       OR pg_catalog.convert_to(updated_operation.operation_kind,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_operation.operation_kind,'UTF8')
+       OR pg_catalog.convert_to(updated_operation.requested_outcome,'UTF8') IS DISTINCT FROM pg_catalog.convert_to(expected_operation.requested_outcome,'UTF8') THEN
+        RAISE EXCEPTION USING ERRCODE='PZ012',MESSAGE='resolution receipt changed after mutation';
+    END IF;
+    RETURN QUERY SELECT operation_row.operation_id,operation_row.operation_kind,operation_row.work_id,
+                    operation_row.expected_revision,operation_row.cycle,operation_row.attempt,operation_row.dispatch_id,
+                    operation_row.requested_outcome,operation_row.retry_at,operation_row.requested_result,
+                    operation_row.result_digest,operation_row.requested_reason,operation_row.evidence,operation_row.binding,
+                    operation_row.resolution_root_xid,operation_row.recorded_at;
+END
+$body$;
+REVOKE ALL ON FUNCTION modkit_events.e31(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea) FROM PUBLIC;
