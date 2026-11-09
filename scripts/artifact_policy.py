@@ -1,6 +1,7 @@
 """Reviewed Events distribution inventory and privacy policy (stdlib only).
 
-This is the current 0.1 dependency profile, not a future native-driver profile.
+This is the Events 0.2 base distribution inventory. Optional driver and service
+qualification remain separate release gates.
 New distributable members or profiles require a deliberate policy review.
 """
 
@@ -51,6 +52,9 @@ modkit_events/retry.py
 modkit_events/subscriptions.py
 modkit_events/persistence/sql/grants_runtime.sql
 modkit_events/persistence/sql/manifest.json
+modkit_events/batch_publication.py
+modkit_events/persistence/recovery_profile.py
+modkit_events/persistence/sql/owner_receipt.sql
 """.split()
 )
 
@@ -154,6 +158,50 @@ CHANGELOG.md
 requirements-dev.txt
 .gitignore
 PKG-INFO
+tests/_installation_artifact_helpers.py
+tests/native/test_e13_recovery_integration.py
+tests/native/test_e31_resolution_sql_integration.py
+tests/native/test_native_renewal_integration.py
+tests/test_batch_publication.py
+tests/test_e31_held_resolution_sql.py
+tests/test_e32_uncertain_settlement_sql.py
+tests/test_fenced_failure_sql.py
+tests/test_installation_grants_contract.py
+tests/test_native_acquisition_sql.py
+tests/test_native_execution_completion_codec.py
+tests/test_native_execution_completion_contract.py
+tests/test_native_execution_completion_issuer.py
+tests/test_native_failure_codec.py
+tests/test_native_failure_contract.py
+tests/test_native_failure_issuer.py
+tests/test_native_failure_lifecycle.py
+tests/test_native_readiness_codec.py
+tests/test_native_readiness_contract.py
+tests/test_native_readiness_issuer.py
+tests/test_native_readiness_lifecycle.py
+tests/test_native_readiness_sql.py
+tests/test_native_recovery_codec.py
+tests/test_native_recovery_contract.py
+tests/test_native_recovery_issuer.py
+tests/test_native_recovery_lifecycle.py
+tests/test_native_recovery_preflight.py
+tests/test_native_recovery_profile.py
+tests/test_native_renewal_codec.py
+tests/test_native_renewal_contract.py
+tests/test_native_renewal_issuer.py
+tests/test_native_resolution_codec.py
+tests/test_native_resolution_contract.py
+tests/test_native_resolution_integration.py
+tests/test_native_resolution_issuer.py
+tests/test_native_resolution_lifecycle.py
+tests/test_native_uncertainty_codec.py
+tests/test_native_uncertainty_contract.py
+tests/test_native_uncertainty_issuer.py
+tests/test_native_uncertainty_lifecycle.py
+tests/test_owner_receipt_resource.py
+tests/test_packaged_migrations.py
+tests/test_work_cancellation_sql.py
+tests/test_work_recovery_sql.py
 """.split()
 )
 
