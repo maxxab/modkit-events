@@ -332,10 +332,12 @@ python -m twine check dist/*
 python scripts/check_wheel.py dist/modkit_events-0.2.0-py3-none-any.whl
 ```
 
-Events 0.2.0 is an unpublished local candidate. Build and installed-artifact
-qualification are pending; the command above is not evidence that this wheel
-exists or has passed checks. Native, installation and platform caveats below
-and elsewhere in this document remain in force.
+Events 0.2.0 is an unpublished local candidate. The reviewed installation
+checkpoint passed base-package wheel/sdist, offline resolver, installed-origin
+and ZIP-resource checks. The command above is not evidence that the current
+source revision passed every release check. Native installation, optional drivers,
+service recovery and platform qualification remain open; see the
+[qualification record](docs/qualification/2026-11-09.md).
 
 Real Redis tests require a disposable standalone server. Set `MODKIT_REDIS_URL`
 and `MODKIT_REQUIRE_REDIS=1` to make missing service configuration a failure.
@@ -360,7 +362,8 @@ a4096-byte bound and never executes SQL or finalizes transactions.
 
 See [installation responsibilities](docs/installation.md). Matching resources or
 E33 rows do not qualify installation, ACL integrity or business authority.
-Candidates remain **not installation-ready** pending independent artifact and
-restricted-role native qualification. Events0.1.0 versus Workers' Events>=0.2
-requirement remains a separate metadata gate; dependency-ignoring installations
-or checkout imports are not installed-pair evidence.
+Candidates remain **not installation-ready** pending restricted-role native
+qualification and final release checks. Events 0.2.0 satisfies Workers 0.1.0's
+Events>=0.2,<0.3 requirement in the reviewed base-only resolver lanes. Optional
+native/service dependencies require separate qualification; dependency-ignoring
+installations or checkout imports are not installed-pair evidence.

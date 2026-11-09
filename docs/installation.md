@@ -9,9 +9,14 @@ qualification remains blocked. A manifest or E33 row is not proof of readiness.
 No startup/import runs SQL, opens connections, creates roles, grants access,
 commits, rolls back or retries.
 
-Metadata is a separate release gate: both packages are version0.1.0 but Workers
-requires modkit-events>=0.2,<0.3 and expected Events native extras are undeclared.
-Ignoring dependencies or importing a checkout does not qualify an installed pair.
+The unpublished candidates are Events 0.2.0 and Workers 0.1.0; Workers requires
+modkit-events>=0.2,<0.3. Events has no Workers dependency. Base-only offline
+resolution, installed-origin and packaged-resource checks passed for the reviewed
+installation checkpoint, including Events-only environments. This does not qualify
+optional drivers, PostgreSQL installation or a later source revision. Ignoring
+dependencies or importing a checkout does not qualify an installed pair.
+See the [qualification record](qualification/2026-11-09.md) for exact revisions
+and remaining gates.
 
 ## Trusted identities and rights
 
