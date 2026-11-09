@@ -30,6 +30,7 @@
 - **persistence:** complete native execution statement bridge (`d3bc1e8b285f`)
 - **persistence:** add uncertain execution settlement (`c18b29b1722d`)
 - **persistence:** add verified native failure settlement (`22d6c0706894`)
+- **persistence:** add native uncertainty settlement and lease renewal (`f37f82271e15`)
 
 ### Bug Fixes
 
