@@ -88,3 +88,23 @@ Evidence: sibling resume-workers-20261109/workers-freeze-v4/
 native-admission-readonly-v1/{result,interpretation}.json and
 redis8-disposal-v2-independent-review.json; Events sibling
 resume-events-20261109/redis8-disposal-v2/REVIEW-PACKET.md and peer-acceptance.json.
+
+### Exact disposal attempt stopped; outcome UNKNOWN
+
+The fresh independently reviewed5command packet9697d8f4/a7887ee4 received explicit
+user disposal approval and ran once. Fresh original configuration/identity and
+created/nonrunning/PID0 checks passed. Its second command, nonforce rm of the exact
+CID, exceeded the approved10second deadline. Cause and daemon/removal outcome are
+UNKNOWN. The approved failure policy preserved local PID836846, raw partial
+captures and the consumed claim; no kill/wait/retry or later absence check ran.
+Canonical ownership is UNRESOLVED, marker SHA256
+6c0b01a934e9ec04b2bd42ce925137b0fbf979550723eb25140c67b0ee69ada6.
+
+A /proc-only observation at23:32:38UTC found that PID absent. This is no proof of
+server completion or current container absence. Native admission remains closed.
+Never replay the disposal packet or reuse that grant. Further exact read-only
+reconciliation and any marker disposition require separately reviewed applicable
+scope; no missing-marker fabrication or free-lock/PID-based clearance.
+Evidence: sibling resume-events-20261109/redis8-disposal-v2/{execution-result,
+retained-client-checkpoint-observation}.json and failure-checkpoint/. No terminal
+disposal success is claimed. Events is stopping for coordinated ownership transfer.
