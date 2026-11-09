@@ -12,10 +12,10 @@
         },
         {
           "path": "events/grants_runtime.sql",
-          "sha256": "5fa56b934f50206172f82bd7c2959b937646aa59cfdcc3dfda259c1fcfe5b0ff"
+          "sha256": "86e0c712bac15b6c8d1870c853e14beaa181cc44a2642967acd1bcdcb5a8e877"
         }
       ],
-      "migration_digest": "650cbd1f333471b7e34214728703bcf022e2a26c6c763b75b33a099624148d60",
+      "migration_digest": "e3d6efb1318ec523e85dee7c6db6d4c34c106f9551d799a6613d985adbb686d7",
       "depends_on": [],
       "catalog_contract_id": "modkit-pg-ab-2",
       "scope_format_id": "MKSC-1",

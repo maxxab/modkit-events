@@ -162,3 +162,67 @@ def test_sr1_public_default_and_mutated_acl_sets_rejected():
             for actual in invalid_states:
                 assert (actual - expected) or (expected - actual), (
                     "contaminated ACL unexpectedly equals wanted", actual, postflight)
+
+
+def test_job_payload_inventory_has_only_actual_declared_columns():
+    """CHECK-expression continuation tokens must never become catalog columns."""
+    import json
+
+    # Independent reviewed table ABI, including nullability and physical order.
+    expected = [
+        ("job_work_id", "pg_catalog.uuid", True),
+        ("job_application", "pg_catalog.bytea", True),
+        ("job_tenant", "pg_catalog.bytea", False),
+        ("job_owner", "pg_catalog.bytea", False),
+        ("job_protected_binding", "pg_catalog.bytea", True),
+        ("job_semantic_input", "pg_catalog.bytea", True),
+        ("material_state", "pg_catalog.text", True),
+        ("protected_sidecar", "pg_catalog.bytea", False),
+        ("protected_reference", "pg_catalog.bytea", False),
+        ("protected_codec", "pg_catalog.bytea", False),
+        ("protected_key_version", "pg_catalog.bytea", False),
+        ("protected_expires_at", "pg_catalog.timestamptz", False),
+        ("protected_recovery_metadata", "pg_catalog.bytea", True),
+        ("protected_cleanup_policy", "pg_catalog.text", True),
+        ("projection_metadata", "pg_catalog.bytea", True),
+    ]
+    initial = (SQL / "0001_initial.sql").read_text()
+    declaration = initial.split("CREATE TABLE modkit_events.job_payloads (", 1)[1]
+    declaration = declaration.split("    CONSTRAINT job_payloads_pkey", 1)[0]
+    actual = []
+    for line in declaration.splitlines():
+        if not line.strip():
+            continue
+        name, wire, *constraints = line.strip().rstrip(",").split()
+        assert constraints in ([], ["NOT", "NULL"])
+        actual.append((name, wire, constraints == ["NOT", "NULL"]))
+    assert actual == expected
+    inventories = re.findall(r"\$relations\$(.*?)\$relations\$",
+                             (SQL / "grants_runtime.sql").read_text(), re.S)
+    assert len(inventories) == 2 and inventories[0] == inventories[1]
+    for raw in inventories:
+        relations = json.loads(raw)
+        for relation in relations:
+            names = [column["name"] for column in relation["columns"]]
+            assert len(names) == len(set(names)), relation["name"]
+        payload = next(row for row in relations if row["name"] == "job_payloads")
+        assert [(col["name"], col["type"], col["notnull"])
+                for col in payload["columns"]] == expected
+
+
+def test_mutation_retry_at_check_does_not_imply_not_null_column():
+    import json
+
+    initial = (SQL / "0001_initial.sql").read_text()
+    table = initial.split("CREATE TABLE modkit_events.mutation_operations (", 1)[1]
+    declaration = table.split("\n", 1)[1]
+    retry = next(line.strip() for line in declaration.splitlines()
+                 if line.strip().startswith("retry_at pg_catalog.timestamptz"))
+    assert retry.startswith("retry_at pg_catalog.timestamptz CHECK (")
+    assert "retry_at IS NULL OR" in retry and "IS NOT NULL" in retry
+    for raw in re.findall(r"\$relations\$(.*?)\$relations\$",
+                          (SQL / "grants_runtime.sql").read_text(), re.S):
+        relation = next(row for row in json.loads(raw)
+                        if row["name"] == "mutation_operations")
+        column = next(row for row in relation["columns"] if row["name"] == "retry_at")
+        assert column == {"name": "retry_at", "type": "pg_catalog.timestamptz", "notnull": False}
