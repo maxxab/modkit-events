@@ -358,7 +358,7 @@ def get_statement(key: str) -> StatementSpec:
     return _STATEMENTS[key]
 
 
-__all__ = ("WireType", "CardinalityKind", "RecordKind", "ConstraintId", "ParameterSpec", "ColumnSpec", "ResultSpec", "StatementSpec", "get_statement")
+__all__ = ("WireType", "CardinalityKind", "RecordKind", "ConstraintId", "ParameterSpec", "ColumnSpec", "ResultSpec", "StatementSpec", "get_statement")  # type: tuple[str, ...]
 
 
 class OperationKind(str, Enum):

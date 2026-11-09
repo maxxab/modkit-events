@@ -64,7 +64,7 @@ jobs:
           python -m mypy src/modkit_events/persistence/errors.py
           tests/typecheck_persistence_boundaries.py
           --follow-imports=silent --warn-unused-ignores
-      - run: python -m mypy src/modkit_events --ignore-missing-imports
+      - run: python -m mypy src/modkit_events --ignore-missing-imports --warn-unused-ignores
       - run: python -m build
       - run: python -m twine check dist/*
       - name: Installed wheel

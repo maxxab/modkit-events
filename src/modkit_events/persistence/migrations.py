@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from typing import NoReturn
 from . import _resource_io as _io
 from . import sql as _sql_anchor  # Inert owned package; initializes standard origin metadata.
 
@@ -24,7 +25,7 @@ _MANIFEST_LIMIT = 65536
 _OWNER_RECEIPT_SHA256 = "73900c796f8183edad0f99c9ec0e992780db4bb529a410fa340219219d06cf3d"
 
 
-def _invalid() -> None:
+def _invalid() -> NoReturn:
     raise ValueError("invalid migration descriptor")
 
 
@@ -33,7 +34,7 @@ def _string(value: object) -> None:
         _invalid()
 
 
-def _digest(value: object) -> None:
+def _digest(value: str) -> None:
     _string(value)
     if len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
         _invalid()

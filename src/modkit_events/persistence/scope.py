@@ -216,7 +216,7 @@ def _decode_scope_fields_raw(
     from .bindings import _decode_utf8
     from .errors import _reject_validation
 
-    decoded = []
+    decoded = []  # type: list[str | None]
     for index, value in enumerate((application, tenant, owner)):
         if value is None and index:
             decoded.append(None)
@@ -224,7 +224,8 @@ def _decode_scope_fields_raw(
             if type(value) is not bytes or not 1 <= len(value) <= 256:
                 _reject_validation()
             decoded.append(_decode_utf8(value, _reject=_reject_validation))
-    return _scope_raw(*decoded)
+    # The first field is non-null by the index/type guard above; list splats lose position types.
+    return _scope_raw(*decoded)  # type: ignore[arg-type]
 
 
 def _canonical_scope_raw(scope: Scope, /) -> bytes:

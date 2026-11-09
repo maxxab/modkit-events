@@ -4,9 +4,10 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import NoReturn
 
 
-def _reject_event(error_type, message, reject):
+def _reject_event(error_type, message, reject) -> NoReturn:
     if reject is not None:
         reject()
     raise error_type(message)

@@ -2410,6 +2410,7 @@ def _decode_binary_transport_row(
         _reject_validation()
 
     # Inspect the complete bounded row before constructing any typed values.
+    column: _TransportColumn | ColumnSpec
     for index in range(1, len(values)):
         value = values[index]
         column = descriptor.transport_columns[index]
@@ -2424,7 +2425,7 @@ def _decode_binary_transport_row(
         if column.wire_type is WireType.BOOL and value not in (b"\x00", b"\x01"):
             _reject_validation()
 
-    converted = []
+    converted = []  # type: list[object]
     for index, column in enumerate(descriptor.canonical_columns, start=1):
         value = values[index]
         if value is None:

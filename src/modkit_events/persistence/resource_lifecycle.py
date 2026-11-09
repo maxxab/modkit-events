@@ -91,7 +91,8 @@ _domain = resource_domain()
 _lock = Lock()
 _limit = None
 _mode = None  # Once-only T1 or managed startup, same canonical table/mutex.
-_cells = {}  # Integer keys only; each value permanently retains the real object.
+_cells = {}  # type: dict[int, _CellState]
+# Integer keys only; each value permanently retains the real object.
 
 
 def _context(ledger):

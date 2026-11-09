@@ -102,7 +102,8 @@ class CommitResultReceipt:
     """Inert exact issuer token; only the native COMMIT issuer can publish one."""
 
     __slots__ = _Handle.__slots__
-    __new__ = _Handle.__new__
+    # Exact shared rejecting constructor; receipt deliberately is not a handle subtype.
+    __new__ = _Handle.__new__  # type: ignore[assignment]
     __setattr__ = _Handle.__setattr__
     __delattr__ = _Handle.__delattr__
     __copy__ = _Handle.__copy__
@@ -147,10 +148,11 @@ _limit_names = (
 )
 _limits = None
 _counts = dict.fromkeys(_names, 0)
-_executions = {}  # Charged X records; never a second physical registry.
-_preparations = {}
-_results = {}
-_native_type = _cell_descriptor = None
+_executions = {}  # type: dict[object, dict[str, object]]
+# Charged X records; never a second physical registry.
+_preparations = {}  # type: dict[object, dict[str, object]]
+_results = {}  # type: dict[object, dict[str, object]]
+_native_type = _cell_descriptor = None  # type: object
 
 
 def _context(ledger):
