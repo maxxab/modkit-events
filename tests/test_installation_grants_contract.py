@@ -226,3 +226,32 @@ def test_mutation_retry_at_check_does_not_imply_not_null_column():
                         if row["name"] == "mutation_operations")
         column = next(row for row in relation["columns"] if row["name"] == "retry_at")
         assert column == {"name": "retry_at", "type": "pg_catalog.timestamptz", "notnull": False}
+
+
+def test_type_topology_if_keeps_case_then_inside_sql_parentheses():
+    """Static regression for the actual PG18.1 PL/pgSQL compile failure.
+
+    PL/pgSQL reads an IF expression through its first top-level THEN. The
+    SQL CASE's THEN must stay within parentheses. Native compilation remains
+    a separate runtime gate; this is a narrow delimiter check, not a SQL parser.
+    """
+    source = (SQL / "grants_runtime.sql").read_text()
+    conditions = source.split("IF typ.oid IS NULL")[1:]
+    assert len(conditions) == 2, "both preflight and postflight must be checked"
+    token = re.compile(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|\bTHEN\b|[()]")
+    for condition in conditions:
+        depth = 0
+        for match in token.finditer(condition):
+            value = match.group()
+            if value == "(":
+                depth += 1
+            elif value == ")":
+                depth -= 1
+                assert depth >= 0
+            elif value == "THEN" and depth == 0:
+                assert condition[match.end():].lstrip().startswith(
+                    "RAISE EXCEPTION USING ERRCODE='PZ011',MESSAGE='Events type topology mismatch'"
+                ), "SQL CASE prematurely terminates the PL/pgSQL IF expression"
+                break
+        else:
+            raise AssertionError("type topology IF has no top-level THEN")

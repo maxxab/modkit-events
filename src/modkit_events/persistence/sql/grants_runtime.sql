@@ -335,7 +335,7 @@ BEGIN
             JOIN pg_catalog.pg_class AS c ON c.oid=t.typrelid WHERE t.oid=object_oid;
         IF typ.oid IS NULL OR typ.typowner<>owner_oid OR typ.typnamespace<>schema_oid
            OR typ.typtype<>'c' OR typ.reltype<>typ.oid
-           OR typ.relkind<>CASE WHEN role_name='_parse_result' THEN 'c' ELSE 'r' END
+           OR typ.relkind<>(CASE WHEN role_name='_parse_result' THEN 'c' ELSE 'r' END)
            OR NOT EXISTS (
                 SELECT 1 FROM pg_catalog.pg_type AS a WHERE a.oid=typ.typarray
                   AND a.typelem=typ.oid AND a.typowner=owner_oid AND a.typnamespace=schema_oid
@@ -673,7 +673,7 @@ BEGIN
             JOIN pg_catalog.pg_class AS c ON c.oid=t.typrelid WHERE t.oid=object_oid;
         IF typ.oid IS NULL OR typ.typowner<>owner_oid OR typ.typnamespace<>schema_oid
            OR typ.typtype<>'c' OR typ.reltype<>typ.oid
-           OR typ.relkind<>CASE WHEN role_name='_parse_result' THEN 'c' ELSE 'r' END
+           OR typ.relkind<>(CASE WHEN role_name='_parse_result' THEN 'c' ELSE 'r' END)
            OR NOT EXISTS (
                 SELECT 1 FROM pg_catalog.pg_type AS a WHERE a.oid=typ.typarray
                   AND a.typelem=typ.oid AND a.typowner=owner_oid AND a.typnamespace=schema_oid

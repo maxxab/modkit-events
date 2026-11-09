@@ -26,3 +26,37 @@ working files and empty objects remain preserved there. This is local Git
 recovery, not release or runtime acceptance. The interrupted test run must not
 be reported as passing. No Redis/PostgreSQL runtime release or fixture had been
 created by this work before the restart.
+
+## 2026-11-09: grant installation compile failure and bounded runtime stops
+
+The approved disposable PostgreSQL installation attempt stopped after creating
+its test roles/databases. PostgreSQL18.1 reported a syntax error at character
+101913 in Events grants. The type-topology `IF` condition contained an
+unparenthesized SQL `CASE`; its inner `THEN` terminated PL/pgSQL expression
+scanning before the SQL expression was complete. Both preflight and postflight
+conditions had this defect. Grouping each CASE expression preserves the
+comparison and strict topology checks. The reproducing static delimiter check
+failed before this change;47focused grant/resource/manifest checks pass after it.
+Actual compilation/installation of the corrected SQL remains UNQUALIFIED.
+Initial SQL, granted signatures/roles, receipt template and contract IDs are
+unchanged. The grant resource and MKMF hashes change; Workers must select the
+new Events aggregate before a new reviewed attempt.
+
+The failed fixture remains preserved. The installer reported an unclosed owner
+connection before exiting; no inferred commit/rollback/close outcome, native
+success or success-only cleanup is claimed. Future harnesses must save the
+actual bounded bootstrap failure observation before asserting its outcome.
+Evidence: sibling `resume-workers-20261109/native-approved-attempt-r3-result.md`,
+`native-install/runtime-r3/` and Events `grants-case-{red,green}.log`.
+
+The separately approved Redis8 create command timed out before returning a CID.
+Only its owned CLI child was killed/reaped; no Redis test ran and Redis7 was not
+attempted. Read-only reconciliation found the exact name absent at the recorded
+observation time; this does not establish the entire prior/late daemon outcome.
+The attempt marker, command journal and socket directory remain preserved.
+Its timeout cause is UNKNOWN. Separate owner reservation messages crossed,
+so the PostgreSQL and Redis attempts were not fully serialized; future runtime
+handoff requires an acknowledged common reservation before either dispatcher.
+No retry, failed-fixture disposal or new runtime scope is implied by these fixes.
+Evidence: sibling `resume-events-20261109/redis/{runtime.json,execution.log}`,
+`redis-readonly-reconciliation.json` and `restart-coordination.md`.
