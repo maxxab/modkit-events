@@ -16,6 +16,7 @@ from uuid import uuid4
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
+from .._failure_reporting import add_failure_note, error_text
 from ..claims import Claim, ClaimResult, OwnershipLost, positive_seconds, validate_key
 from ..codec import JsonCodec
 from ..consumer import Consumer
@@ -289,7 +290,7 @@ class RedisStreams:
         try:
             event = self.codec.decode(delivery.raw)
         except ValueError as error:
-            return await self._dead_letter(delivery, f"Invalid envelope: {error}")
+            return await self._dead_letter(delivery, f"Invalid envelope: {error_text(error)}")
         # Atomically check per-delivery terminal marker AND acquire the event claim.
         claim = Claim(consumer.scope, event.event_id, uuid4().hex)
         acquired = await self.client.eval(
@@ -327,12 +328,12 @@ class RedisStreams:
             if not isinstance(error, Exception):
                 try:
                     if not await store.release(claim):
-                        error.add_note("Claim release lost ownership")
+                        add_failure_note(error, "Claim release lost ownership")
                 except BaseException as cleanup:
-                    error.add_note(f"Claim cleanup failed: {type(cleanup).__name__}: {cleanup}")
+                    add_failure_note(error, "Claim cleanup failed", cleanup)
                 raise
             if isinstance(error, TerminalEventError):
-                return await self._dead_letter(delivery, str(error), store, claim)
+                return await self._dead_letter(delivery, error_text(error), store, claim)
             # Fence retry bookkeeping and release in one Redis operation. Keep
             # the claim when exhausted until the fenced DLQ handoff completes.
             count = await self.client.eval(
@@ -348,7 +349,7 @@ class RedisStreams:
             if count == -1:
                 raise OwnershipLost("Handler failure lost ownership") from error
             if count >= self.retry.max_attempts:
-                return await self._dead_letter(delivery, str(error), store, claim)
+                return await self._dead_letter(delivery, error_text(error), store, claim)
             return "retry"
         if not await consumer.store.complete(claim):
             raise OwnershipLost("Handler finished after claim ownership was lost")
