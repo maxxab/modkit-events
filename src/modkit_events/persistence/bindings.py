@@ -1,4 +1,5 @@
 """Bounded NEW MKPF/J and managed replay codecs; no transaction or I/O."""
+
 import json
 import math
 import re
@@ -8,7 +9,10 @@ from hashlib import sha256
 from types import MappingProxyType
 from .errors import _boundary, _reject_validation
 from .models import (
-    CanonicalEvidence, ProtectedBindingInput, MaterialState, CleanupPolicy,
+    CanonicalEvidence,
+    ProtectedBindingInput,
+    MaterialState,
+    CleanupPolicy,
     _canonical_evidence_raw,
 )
 from .scope import Scope, _encode_field
@@ -58,7 +62,7 @@ def _instant(value, *, _reject=None):
 
 
 def _identifier(value):
-    return Scope(value).application.encode('utf-8')
+    return Scope(value).application.encode("utf-8")
 
 
 def _identifier_raw(value):
@@ -73,7 +77,7 @@ def _event_raw(event_id, name, payload, schema_version, metadata):
 
 
 def _frame(raw):
-    return len(raw).to_bytes(8,'big')+raw
+    return len(raw).to_bytes(8, "big") + raw
 
 
 def _record(tag, fields, *, _reject=None):
@@ -117,9 +121,7 @@ def _decimal(value, *, _reject=None):
         value, part = divmod(value, 1000000000)
         chunks.append(part)
     text = (
-        "0"
-        if not chunks
-        else str(chunks[-1]) + "".join(f"{x:09d}" for x in reversed(chunks[:-1]))
+        "0" if not chunks else str(chunks[-1]) + "".join(f"{x:09d}" for x in reversed(chunks[:-1]))
     )
     if len(text) > 4096:
         _reject_scalar(_reject)
@@ -274,11 +276,7 @@ def _j(value, depth, budget, *, _reject=None):
             if index >= precharged:
                 budget.add(8)
             items.append(_j(item, depth + 1, budget, _reject=_reject))
-        return (
-            b"a"
-            + len(items).to_bytes(4, "big")
-            + b"".join(_frame(item) for item in items)
-        )
+        return b"a" + len(items).to_bytes(4, "big") + b"".join(_frame(item) for item in items)
     _reject_scalar(_reject)
 
 
@@ -387,8 +385,7 @@ def _parse_j(raw, depth, budget, *, _reject=None):
             _reject_scalar(_reject)
         if tag == b"a":
             value = tuple(
-                _parse_j(r.frame(), depth + 1, budget, _reject=_reject)
-                for _ in range(count)
+                _parse_j(r.frame(), depth + 1, budget, _reject=_reject) for _ in range(count)
             )
         else:
             result = {}
@@ -412,9 +409,7 @@ def _parse_canonical_json_core(raw, *, _reject=None):
     if type(raw) is not bytes or not 1 <= len(raw) <= _MAX:
         _reject_scalar(_reject)
     value = _parse_j(raw, 0, _Budget(_reject=_reject), _reject=_reject)
-    if (
-        canonical_json(value) if _reject is None else _canonical_json_raw(value)
-    ) != raw:
+    if (canonical_json(value) if _reject is None else _canonical_json_raw(value)) != raw:
         _reject_scalar(_reject)
     return value
 
@@ -428,7 +423,8 @@ def _parse_canonical_json_raw(raw):
     return _parse_canonical_json_core(raw, _reject=_reject_validation)
 
 
-_NUMBER=re.compile(r'-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z')
+_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+
 
 def _json_number(text, *, _reject=None):
     if len(text) > 8192 or not _NUMBER.fullmatch(text):
@@ -458,15 +454,18 @@ def _json_number_raw(text):
 
 
 def _pairs(items):
-    if len(items)>65536:raise ValueError
-    result={}
-    for key,value in items:
-        if key in result:raise ValueError
-        result[key]=value
+    if len(items) > 65536:
+        raise ValueError
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ValueError
+        result[key] = value
     return result
 
 
-def _invalid(value):raise ValueError
+def _invalid(value):
+    raise ValueError
 
 
 class _JSONReader:
@@ -610,12 +609,16 @@ def _decode_mapping_replay_raw(raw):
 
 
 def _float_decimal(value):
-    if value==0:return '-0.0' if math.copysign(1,value)<0 else '0.0'
-    negative=value<0;n,d=abs(value).as_integer_ratio();whole,remainder=divmod(n,d)
-    fraction=[]
+    if value == 0:
+        return "-0.0" if math.copysign(1, value) < 0 else "0.0"
+    negative = value < 0
+    n, d = abs(value).as_integer_ratio()
+    whole, remainder = divmod(n, d)
+    fraction = []
     while remainder:
-        digit,remainder=divmod(remainder*10,d);fraction.append(str(digit))
-    return ('-' if negative else '')+str(whole)+'.'+(''.join(fraction) or '0')
+        digit, remainder = divmod(remainder * 10, d)
+        fraction.append(str(digit))
+    return ("-" if negative else "") + str(whole) + "." + ("".join(fraction) or "0")
 
 
 def _emit(value, *, _reject=None):
@@ -678,8 +681,9 @@ def _emit_raw(value):
 
 @_boundary
 def encode_mapping_replay(value):
-    if not isinstance(value,Mapping):raise ValueError
-    frozen=parse_canonical_json(canonical_json(value))
+    if not isinstance(value, Mapping):
+        raise ValueError
+    frozen = parse_canonical_json(canonical_json(value))
     return _emit(frozen)
 
 
@@ -723,9 +727,7 @@ def _canonical_event_core(event, *, _reject=None):
     fields = [
         (_identifier if _reject is None else _identifier_raw)(event.event_id),
         (_identifier if _reject is None else _identifier_raw)(event.name),
-        (version_to_decimal if _reject is None else _version_to_decimal_raw)(
-            event.schema_version
-        ),
+        (version_to_decimal if _reject is None else _version_to_decimal_raw)(event.schema_version),
         (canonical_json if _reject is None else _canonical_json_raw)(event.payload),
         (canonical_json if _reject is None else _canonical_json_raw)(event.metadata),
     ]
@@ -755,9 +757,7 @@ def _timestamp(value, *, _reject=None):
 
 
 def _metadata(value, empty=False, *, _reject=None):
-    parse_canonical_json_fn = (
-        parse_canonical_json if _reject is None else _parse_canonical_json_raw
-    )
+    parse_canonical_json_fn = parse_canonical_json if _reject is None else _parse_canonical_json_raw
     canonical_json_fn = canonical_json if _reject is None else _canonical_json_raw
     if type(value) is bytes:
         if empty and value == b"":
@@ -793,10 +793,7 @@ def _normalize_material(m, *, _reject=None):
     )
     if m.material_state is MaterialState.ABSENT:
         if (
-            any(
-                v is not None
-                for v in (sidecar, reference, m.codec, m.key_version, expires)
-            )
+            any(v is not None for v in (sidecar, reference, m.codec, m.key_version, expires))
             or m.cleanup_policy is not CleanupPolicy.RETAIN
             or content != b""
             or recovery != b""
@@ -835,16 +832,8 @@ def _canonical_protected_binding_core(material, *, _reject=None):
     fields = [
         material.material_state.value.encode(),
         _optional(None if material.codec is None else identifier_fn(material.codec)),
-        _optional(
-            None
-            if material.key_version is None
-            else identifier_fn(material.key_version)
-        ),
-        _optional(
-            None
-            if values["expires_at"] is None
-            else _timestamp_fn(values["expires_at"])
-        ),
+        _optional(None if material.key_version is None else identifier_fn(material.key_version)),
+        _optional(None if values["expires_at"] is None else _timestamp_fn(values["expires_at"])),
         material.cleanup_policy.value.encode(),
         _optional(values["sidecar"]),
         _optional(values["reference"]),
@@ -873,11 +862,7 @@ def _decode_protected_binding_core(raw, *, _reject=None):
     if type(raw) is not bytes or not 1 <= len(raw) <= _MAX:
         _reject_scalar(_reject)
     r = _Reader(raw, _reject=_reject)
-    if (
-        r.take(5) != b"MKPF\x01"
-        or r.frame() != b"protected-binding"
-        or r.number(4) != 10
-    ):
+    if r.take(5) != b"MKPF\x01" or r.frame() != b"protected-binding" or r.number(4) != 10:
         _reject_scalar(_reject)
     f = [r.frame() for _ in range(10)]
     r.end()
@@ -899,17 +884,13 @@ def _decode_protected_binding_core(raw, *, _reject=None):
             ):
                 _reject_scalar(_reject)
             try:
-                instant = datetime.fromisoformat(
-                    expiry.decode("ascii").replace("Z", "+00:00")
-                )
+                instant = datetime.fromisoformat(expiry.decode("ascii").replace("Z", "+00:00"))
             except ValueError as error:
                 if type(error) is not ValueError:
                     raise
                 _reject_scalar(_reject)
         else:
-            instant = datetime.fromisoformat(
-                expiry.decode("ascii").replace("Z", "+00:00")
-            )
+            instant = datetime.fromisoformat(expiry.decode("ascii").replace("Z", "+00:00"))
         if _timestamp(instant, _reject=_reject) != expiry:
             _reject_scalar(_reject)
     if _reject is not None:
@@ -918,9 +899,7 @@ def _decode_protected_binding_core(raw, *, _reject=None):
             b"erase_after_terminal",
         ):
             _reject_scalar(_reject)
-    material = (
-        ProtectedBindingInput if _reject is None else _protected_binding_input_raw
-    )(
+    material = (ProtectedBindingInput if _reject is None else _protected_binding_input_raw)(
         material_state=MaterialState(f[0].decode("ascii")),
         codec=None if codec is None else _decode_utf8(codec, _reject=_reject),
         key_version=None if key is None else _decode_utf8(key, _reject=_reject),
@@ -938,17 +917,17 @@ def _decode_protected_binding_core(raw, *, _reject=None):
 
 
 @_boundary
-def validate_protected_binding(raw,material):
-    decoded=decode_protected_binding(raw);evidence=canonical_protected_binding(material)
-    if canonical_protected_binding(decoded).content!=evidence.content:raise ValueError
+def validate_protected_binding(raw, material):
+    decoded = decode_protected_binding(raw)
+    evidence = canonical_protected_binding(material)
+    if canonical_protected_binding(decoded).content != evidence.content:
+        raise ValueError
     return evidence
 
 
 def _canonical_intent_core(admission, *, _reject=None):
     identifier_fn = _identifier if _reject is None else _identifier_raw
-    version_to_decimal_fn = (
-        version_to_decimal if _reject is None else _version_to_decimal_raw
-    )
+    version_to_decimal_fn = version_to_decimal if _reject is None else _version_to_decimal_raw
     bytes_fn = _bytes if _reject is None else _bytes_raw
     integer_fn = _integer if _reject is None else _integer_raw
 
@@ -973,9 +952,7 @@ def _canonical_intent_core(admission, *, _reject=None):
     fields = [
         identity.kind.value.encode(),
         _optional(
-            None
-            if identity.subscription_id is None
-            else identifier_fn(identity.subscription_id)
+            None if identity.subscription_id is None else identifier_fn(identity.subscription_id)
         ),
         identifier_fn(identity.namespace),
         identifier_fn(identity.command_type),
@@ -983,17 +960,13 @@ def _canonical_intent_core(admission, *, _reject=None):
         version_to_decimal_fn(identity.scope.canonical_version),
         identity.scope.canonical,
         _optional(
-            None
-            if identity.idempotency_key is None
-            else identifier_fn(identity.idempotency_key)
+            None if identity.idempotency_key is None else identifier_fn(identity.idempotency_key)
         ),
         bytes_fn(admission.semantic_input),
         bytes_fn(admission.protected_binding),
         admission.replay_policy.value.encode(),
         _decimal(integer_fn(admission.max_attempts, 1, 1000)),
-        _optional(
-            None if admission.deadline is None else _timestamp_fn(admission.deadline)
-        ),
+        _optional(None if admission.deadline is None else _timestamp_fn(admission.deadline)),
         _timestamp_fn(admission.original_available_at),
     ]
     raw = _record(b"work-intent", fields, _reject=_reject)
@@ -1005,8 +978,16 @@ def _canonical_intent_core(admission, *, _reject=None):
 from dataclasses import dataclass
 from uuid import UUID
 from collections.abc import Sequence
-from .catalog import (StatementSpec, ParameterSpec, ResultSpec, ColumnSpec, WireType,
-                      ConstraintId, RecordKind, CardinalityKind)
+from .catalog import (
+    StatementSpec,
+    ParameterSpec,
+    ResultSpec,
+    ColumnSpec,
+    WireType,
+    ConstraintId,
+    RecordKind,
+    CardinalityKind,
+)
 from .models import AdmissionInput, EventInput, Fence, GuardRef, PublicationFence
 
 
@@ -1060,16 +1041,24 @@ def _scalar_core(value, wire_type, nullable, *, _reject=None):
     _reject_scalar(_reject)
 
 
-
 @_boundary
 def _scalar(value, wire_type, nullable):
     return _scalar_core(value, wire_type, nullable)
 
 
-_RAW_SCALAR_TYPES = frozenset((
-    WireType.UUID, WireType.BYTEA, WireType.TEXT, WireType.INT4,
-    WireType.INT8, WireType.XID8, WireType.BOOL, WireType.TIMESTAMPTZ, WireType.FLOAT8,
-))
+_RAW_SCALAR_TYPES = frozenset(
+    (
+        WireType.UUID,
+        WireType.BYTEA,
+        WireType.TEXT,
+        WireType.INT4,
+        WireType.INT8,
+        WireType.XID8,
+        WireType.BOOL,
+        WireType.TIMESTAMPTZ,
+        WireType.FLOAT8,
+    )
+)
 
 
 def _scalar_raw(value, wire_type, nullable):
@@ -1090,15 +1079,19 @@ def _scalar_raw(value, wire_type, nullable):
 
 
 def _statement_shape(statement):
-    if type(statement) is not StatementSpec:raise ValueError
+    if type(statement) is not StatementSpec:
+        raise ValueError
     statement.__post_init__()
-    if type(statement.result) is not ResultSpec:raise ValueError
+    if type(statement.result) is not ResultSpec:
+        raise ValueError
     statement.result.__post_init__()
     for parameter in statement.parameters:
-        if type(parameter) is not ParameterSpec:raise ValueError
+        if type(parameter) is not ParameterSpec:
+            raise ValueError
         parameter.__post_init__()
     for column in statement.result.columns:
-        if type(column) is not ColumnSpec:raise ValueError
+        if type(column) is not ColumnSpec:
+            raise ValueError
         column.__post_init__()
 
 
@@ -1108,8 +1101,27 @@ def _statement_shape_raw(statement):
         _reject_validation()
     from . import catalog
 
-    expected_key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E13", "E14", "E28", "E31", "E32", "E33")
-                         if statement is catalog.get_statement(key)), None)
+    expected_key = next(
+        (
+            key
+            for key in (
+                "E05",
+                "E06",
+                "E08",
+                "E09",
+                "E10",
+                "E11",
+                "E13",
+                "E14",
+                "E28",
+                "E31",
+                "E32",
+                "E33",
+            )
+            if statement is catalog.get_statement(key)
+        ),
+        None,
+    )
     if expected_key is None:
         _reject_validation()
     key = statement.key
@@ -1130,12 +1142,21 @@ class ReadinessExpectation:
     @_boundary
     def __post_init__(self):
         from .observations import SchemaStatus
-        if type(self.components) is not tuple or not 1<=len(self.components)<=2:raise ValueError
+
+        if type(self.components) is not tuple or not 1 <= len(self.components) <= 2:
+            raise ValueError
         for value in self.components:
-            if type(value) is not SchemaStatus:raise ValueError
+            if type(value) is not SchemaStatus:
+                raise ValueError
             value.__post_init__()
-            if (value.catalog_contract_id,value.scope_format_id,value.intent_format_id)!=('modkit-pg-ab-2','MKSC-1','MKPF-1'):raise ValueError
-        if tuple(v.component for v in self.components) not in (('events',),('events','workers')):raise ValueError
+            if (value.catalog_contract_id, value.scope_format_id, value.intent_format_id) != (
+                "modkit-pg-ab-2",
+                "MKSC-1",
+                "MKPF-1",
+            ):
+                raise ValueError
+        if tuple(v.component for v in self.components) not in (("events",), ("events", "workers")):
+            raise ValueError
 
 
 def _validate_empty_context_fields(expected, readiness, *, _reject):
@@ -1167,7 +1188,8 @@ def _validate_readiness_expectation_raw(expectation, /):
             if identifiers != ("modkit-pg-ab-2", "MKSC-1", "MKPF-1"):
                 _reject_validation()
         if tuple(value.component for value in components) not in (
-            ("events",), ("events", "workers")
+            ("events",),
+            ("events", "workers"),
         ):
             _reject_validation()
     except AttributeError as error:
@@ -1246,46 +1268,139 @@ def _constraint(value, code, *, _reject=None):
     if value is None:
         return
     name = code.value
-    identifiers={'subscription_id','namespace','command_type','idempotency_key','scope_application','scope_tenant','scope_owner','event_id','consumer_group','effect_id','provider_key_reference','protected_codec','protected_key_version'}
+    identifiers = {
+        "subscription_id",
+        "namespace",
+        "command_type",
+        "idempotency_key",
+        "scope_application",
+        "scope_tenant",
+        "scope_owner",
+        "event_id",
+        "consumer_group",
+        "effect_id",
+        "provider_key_reference",
+        "protected_codec",
+        "protected_key_version",
+    }
     if name in identifiers:
         if _reject is None:
             _identifier(value.decode("utf8"))
         else:
             _identifier_raw(_decode_utf8(_bytes_raw(value), _reject=_reject))
         return
-    if name=='scope_evidence':
+    if name == "scope_evidence":
         from .scope import decode_canonical_scope
-        decode_canonical_scope(value);return
-    if name=='schema_version_decimal':version_from_decimal(value);return
-    if name=='canonical_version':_integer(value,1,1);return
-    bounds={'max_attempts':(1,1000),'capacity':(1,2147483647),'limit':(1,256),'discovery_budget':(1,4096),'ownership_revision':(1,2**63-1),'expected_revision':(0,2**63-1),'cycle':(1,1),'expected_attempt':(0,1000),'attempt':(1,1000),'after_id':(0,2**63-1),'after_cycle':(0,2147483647),'after_attempt':(0,2147483647)}
-    if name in bounds:_integer(value,*bounds[name]);return
-    if name=='lease_seconds':
-        if not 0<value<=3600:raise ValueError
+
+        decode_canonical_scope(value)
         return
-    if name=='outbox_cursor':
-        if len(value)!=32:raise ValueError
+    if name == "schema_version_decimal":
+        version_from_decimal(value)
         return
-    if name=='receipt':
-        if len(value)>4096:raise ValueError
+    if name == "canonical_version":
+        _integer(value, 1, 1)
         return
-    enums={'kind':('job','inbox'),'replay_policy':('disabled','application_safe'),'failure_outcome':('failed','cancelled','retry_waiting'),'publication_status':('confirmed','rejected','uncertain'),'repair_status':('published','rejected'),'resolution_outcome':('confirmed_success','confirmed_rejection','confirmed_cancelled','safe_retry'),'required_profile':('events','workers'),'material_state':('absent','present'),'protected_cleanup_policy':('retain','erase_after_terminal')}
+    bounds = {
+        "max_attempts": (1, 1000),
+        "capacity": (1, 2147483647),
+        "limit": (1, 256),
+        "discovery_budget": (1, 4096),
+        "ownership_revision": (1, 2**63 - 1),
+        "expected_revision": (0, 2**63 - 1),
+        "cycle": (1, 1),
+        "expected_attempt": (0, 1000),
+        "attempt": (1, 1000),
+        "after_id": (0, 2**63 - 1),
+        "after_cycle": (0, 2147483647),
+        "after_attempt": (0, 2147483647),
+    }
+    if name in bounds:
+        _integer(value, *bounds[name])
+        return
+    if name == "lease_seconds":
+        if not 0 < value <= 3600:
+            raise ValueError
+        return
+    if name == "outbox_cursor":
+        if len(value) != 32:
+            raise ValueError
+        return
+    if name == "receipt":
+        if len(value) > 4096:
+            raise ValueError
+        return
+    enums = {
+        "kind": ("job", "inbox"),
+        "replay_policy": ("disabled", "application_safe"),
+        "failure_outcome": ("failed", "cancelled", "retry_waiting"),
+        "publication_status": ("confirmed", "rejected", "uncertain"),
+        "repair_status": ("published", "rejected"),
+        "resolution_outcome": (
+            "confirmed_success",
+            "confirmed_rejection",
+            "confirmed_cancelled",
+            "safe_retry",
+        ),
+        "required_profile": ("events", "workers"),
+        "material_state": ("absent", "present"),
+        "protected_cleanup_policy": ("retain", "erase_after_terminal"),
+    }
     if name in enums:
-        if value not in enums[name]:raise ValueError
+        if value not in enums[name]:
+            raise ValueError
         return
-    if name=='reason':
-        if not re.fullmatch(r'[a-z][a-z0-9_]{0,255}',value):raise ValueError
+    if name == "reason":
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,255}", value):
+            raise ValueError
         return
-    if name=='command_types':
-        for raw in value:_identifier(raw.decode('utf8'))
+    if name == "command_types":
+        for raw in value:
+            _identifier(raw.decode("utf8"))
         return
-    if name=='schema_versions':
-        for version in value:_integer(version,1,2147483647)
+    if name == "schema_versions":
+        for version in value:
+            _integer(version, 1, 2147483647)
         return
     # Structural scalars and bounded opaque evidence have no further standalone
     # semantics; their cross-field relationships are checked below.
-    permitted={'work_id','token','expected_token','dispatch_id','intent_id','operation_id','guard_id','root_xid','failed_business_root','work_cursor','after_work_id','deadline','original_available_at','available_at','retry_at','after_created_at','protected_expires_at','supported','manifest','broker_reference','transport_observation','intent_evidence','semantic_input','replay_input','protected_binding','envelope_evidence','request_evidence','result','evidence','binding','protected_sidecar','protected_reference','protected_recovery_metadata','projection_metadata'}
-    if name not in permitted:raise ValueError
+    permitted = {
+        "work_id",
+        "token",
+        "expected_token",
+        "dispatch_id",
+        "intent_id",
+        "operation_id",
+        "guard_id",
+        "root_xid",
+        "failed_business_root",
+        "work_cursor",
+        "after_work_id",
+        "deadline",
+        "original_available_at",
+        "available_at",
+        "retry_at",
+        "after_created_at",
+        "protected_expires_at",
+        "supported",
+        "manifest",
+        "broker_reference",
+        "transport_observation",
+        "intent_evidence",
+        "semantic_input",
+        "replay_input",
+        "protected_binding",
+        "envelope_evidence",
+        "request_evidence",
+        "result",
+        "evidence",
+        "binding",
+        "protected_sidecar",
+        "protected_reference",
+        "protected_recovery_metadata",
+        "projection_metadata",
+    }
+    if name not in permitted:
+        raise ValueError
 
 
 def _validate_guard_ref_raw(value, /):
@@ -1304,8 +1419,7 @@ def _constraint_raw(value, code):
     """Only constraints reached by the fixed selected Events requests."""
     if type(code) is not ConstraintId:
         _reject_validation()
-    if code in (ConstraintId.EVENT_ID, ConstraintId.EFFECT_ID,
-                ConstraintId.PROVIDER_KEY_REFERENCE):
+    if code in (ConstraintId.EVENT_ID, ConstraintId.EFFECT_ID, ConstraintId.PROVIDER_KEY_REFERENCE):
         if value is not None:
             _identifier_raw(_decode_utf8(_bytes_raw(value), _reject=_reject_validation))
         return
@@ -1326,9 +1440,13 @@ def _constraint_raw(value, code):
         if type(value) is not str or value not in ("events", "workers"):
             _reject_validation()
         return
-    bounds = {"ownership_revision": (1, 2**63 - 1), "cycle": (1, 1),
-              "expected_attempt": (0, 1000), "expected_revision": (0, 2**63 - 1),
-              "attempt": (1, 1000)}
+    bounds = {
+        "ownership_revision": (1, 2**63 - 1),
+        "cycle": (1, 1),
+        "expected_attempt": (0, 1000),
+        "expected_revision": (0, 2**63 - 1),
+        "attempt": (1, 1000),
+    }
     if code.value in bounds:
         _integer_raw(value, *bounds[code.value])
         return
@@ -1338,7 +1456,10 @@ def _constraint_raw(value, code):
         return
     if code.value == "resolution_outcome":
         if type(value) is not str or value not in (
-            "confirmed_success", "confirmed_rejection", "confirmed_cancelled", "safe_retry"
+            "confirmed_success",
+            "confirmed_rejection",
+            "confirmed_cancelled",
+            "safe_retry",
         ):
             _reject_validation()
         return
@@ -1350,17 +1471,27 @@ def _constraint_raw(value, code):
         if type(value) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,255}", value) is None:
             _reject_validation()
         return
-    if code.value not in ("work_id", "work_cursor", "token", "dispatch_id", "request_evidence",
-                          "guard_id", "root_xid", "result", "failed_business_root",
-                          "retry_at", "evidence", "operation_id", "binding"):
+    if code.value not in (
+        "work_id",
+        "work_cursor",
+        "token",
+        "dispatch_id",
+        "request_evidence",
+        "guard_id",
+        "root_xid",
+        "result",
+        "failed_business_root",
+        "retry_at",
+        "evidence",
+        "operation_id",
+        "binding",
+    ):
         _reject_validation()
 
 
 def _admission_values_core(admission, *, _reject=None):
     identifier_fn = _identifier if _reject is None else _identifier_raw
-    version_to_decimal_fn = (
-        version_to_decimal if _reject is None else _version_to_decimal_raw
-    )
+    version_to_decimal_fn = version_to_decimal if _reject is None else _version_to_decimal_raw
     canonical_intent_fn = canonical_intent if _reject is None else _canonical_intent_raw
     identity = admission.identity
     scope = identity.scope
@@ -1392,7 +1523,6 @@ def _admission_values_core(admission, *, _reject=None):
     )
 
 
-
 def _admission_values(admission):
     return _admission_values_core(admission)
 
@@ -1406,9 +1536,7 @@ def _admission_values_raw(admission, /):
 
 def _snapshot_sequence(values, maximum, *, _reject=None):
     """Read a Sequence once, bounding actual items rather than trusting __len__."""
-    if not isinstance(values, Sequence) or isinstance(
-        values, (str, bytes, bytearray, memoryview)
-    ):
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray, memoryview)):
         _reject_scalar(_reject)
     result = []
     for index, value in enumerate(values):
@@ -1436,9 +1564,7 @@ def _freeze_parameters(statement, parameters, context, *, _reject=None):
     if len(parameters) != len(statement.parameters):
         _reject_scalar(_reject)
     frozen = tuple(
-        (_scalar if _reject is None else _scalar_raw)(
-            value, spec.wire_type, spec.nullable
-        )
+        (_scalar if _reject is None else _scalar_raw)(value, spec.wire_type, spec.nullable)
         for spec, value in zip(statement.parameters, parameters)
     )
     for spec, value in zip(statement.parameters, frozen):
@@ -1466,9 +1592,7 @@ def _freeze_parameters(statement, parameters, context, *, _reject=None):
     if key == "E33":
         if context.readiness is None or tuple(
             v.component for v in context.readiness.components
-        ) != (
-            ("events",) if p["required_profile"] == "events" else ("events", "workers")
-        ):
+        ) != (("events",) if p["required_profile"] == "events" else ("events", "workers")):
             _reject_scalar(_reject)
     elif context.readiness is not None:
         _reject_scalar(_reject)
@@ -1522,21 +1646,15 @@ def _freeze_parameters(statement, parameters, context, *, _reject=None):
             _reject_scalar(_reject)
     if "discovery_budget" in p and p["discovery_budget"] < p["limit"]:
         _reject_scalar(_reject)
-    if key == "E12" and (p["expected_token"] is None) != (
-        p["expected_revision"] is None
-    ):
+    if key == "E12" and (p["expected_token"] is None) != (p["expected_revision"] is None):
         _reject_scalar(_reject)
-    if key in ("E30", "W03") and (p["after_created_at"] is None) != (
-        p["after_work_id"] is None
-    ):
+    if key in ("E30", "W03") and (p["after_created_at"] is None) != (p["after_work_id"] is None):
         _reject_scalar(_reject)
     if key in ("E11", "E31"):
         retry = p["outcome"] in ("retry_waiting", "safe_retry")
         if retry != (p["retry_at"] is not None):
             _reject_scalar(_reject)
-        if key == "E31" and (p["outcome"] == "confirmed_success") != (
-            p["result"] is not None
-        ):
+        if key == "E31" and (p["outcome"] == "confirmed_success") != (p["result"] is not None):
             _reject_scalar(_reject)
     if key == "W01":
         material = decode_protected_binding(p["protected_binding"])
@@ -1544,9 +1662,7 @@ def _freeze_parameters(statement, parameters, context, *, _reject=None):
             "material_state": material.material_state.value,
             "protected_sidecar": material.sidecar,
             "protected_reference": material.reference,
-            "protected_codec": None
-            if material.codec is None
-            else _identifier(material.codec),
+            "protected_codec": None if material.codec is None else _identifier(material.codec),
             "protected_key_version": None
             if material.key_version is None
             else _identifier(material.key_version),
@@ -1568,13 +1684,14 @@ class FrozenRequest:
 
     @_boundary
     def __post_init__(self):
-        object.__setattr__(self,'parameters',_freeze_parameters(self.statement,self.parameters,self.context))
+        object.__setattr__(
+            self, "parameters", _freeze_parameters(self.statement, self.parameters, self.context)
+        )
 
 
 @_boundary
-def freeze_request(statement,parameters,/,*,context):
-    return FrozenRequest(statement=statement,parameters=parameters,context=context)
-
+def freeze_request(statement, parameters, /, *, context):
+    return FrozenRequest(statement=statement, parameters=parameters, context=context)
 
 
 def _freeze_request_raw(statement, parameters, /, *, context):
@@ -1613,8 +1730,7 @@ def _uuid_raw(value):
     if type(value.int) is not int or not 0 <= value.int < 2**128:
         _reject_validation()
     if not any(
-        value.is_safe is choice
-        for choice in (SafeUUID.safe, SafeUUID.unsafe, SafeUUID.unknown)
+        value.is_safe is choice for choice in (SafeUUID.safe, SafeUUID.unsafe, SafeUUID.unknown)
     ):
         _reject_validation()
     return value

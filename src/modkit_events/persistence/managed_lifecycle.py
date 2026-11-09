@@ -434,6 +434,7 @@ def _preparation_size(payload, operation=None, *, max_page_payload_bytes=None):
         payload.context,
         _reject=_reject_validation,
     )
+
     def scalar_size(value):
         return getsizeof(value) + (getsizeof(value.int) if type(value) is UUID else 0)
 
@@ -449,13 +450,14 @@ def _preparation_size(payload, operation=None, *, max_page_payload_bytes=None):
         size += getsizeof(readiness) + getsizeof(readiness.components)
         for status in readiness.components:
             size += getsizeof(status)
-            size += sum(scalar_size(getattr(status, column.name))
-                        for column in payload.statement.result.columns)
+            size += sum(
+                scalar_size(getattr(status, column.name))
+                for column in payload.statement.result.columns
+            )
     # Count every retained occurrence, even if parameter/context fields alias.
     for expected in payload.context.expected:
         size += getsizeof(expected)
-        size += sum(scalar_size(getattr(expected, name))
-                    for name in expected.__dataclass_fields__)
+        size += sum(scalar_size(getattr(expected, name)) for name in expected.__dataclass_fields__)
     return size
 
 
@@ -760,6 +762,7 @@ def _listing_capacity_error(preparation, capacity):
         # Validate canonical metadata even for copied E13 statements, rather
         # than trusting a caller-controlled key to choose the safety gate.
         from .catalog import StatementSpec
+
         statement = request.statement
         if type(statement) is not StatementSpec:
             return ErrorCode.PROFILE_REJECTED
@@ -772,14 +775,19 @@ def _listing_capacity_error(preparation, capacity):
             _recovery_result_min,
             _validate_recovery_request,
         )
+
         try:
             limit = _validate_recovery_request(request)
             minimum_a = _recovery_preparation_min()
             minimum_b = _recovery_result_min(limit)
             paid = preparation.get("capacity")
-            if (type(paid) is not int or paid < minimum_a
-                    or _preparation_size(request) > paid
-                    or type(capacity) is not int or capacity < minimum_b):
+            if (
+                type(paid) is not int
+                or paid < minimum_a
+                or _preparation_size(request) > paid
+                or type(capacity) is not int
+                or capacity < minimum_b
+            ):
                 return ErrorCode.CAPACITY_EXCEEDED
         except _ValidationReject as error:
             if type(error) is not _ValidationReject:
@@ -1059,6 +1067,7 @@ def result_capacity(ticket, /, *, execution_ledger):
                             _recovery_result_min,
                             _validate_recovery_request,
                         )
+
                         try:
                             capacity = _recovery_result_min(
                                 _validate_recovery_request(preparation["data"])
@@ -1176,9 +1185,10 @@ def _typed_result_size(request, payload):
         _validate_recovery_page_raw(request, payload)
         columns = request.statement.result.columns
         size = getsizeof(payload) + getsizeof(payload.items)
-        size += sum(_retained_scalar_size(getattr(payload, name), columns[index])
-                    for index, name in ((1, "visited"), (2, "next_cursor"),
-                                        (3, "pass_exhausted")))
+        size += sum(
+            _retained_scalar_size(getattr(payload, name), columns[index])
+            for index, name in ((1, "visited"), (2, "next_cursor"), (3, "pass_exhausted"))
+        )
         base = get_statement("E15").result.columns[:39]
         for item in payload.items:
             size += getsizeof(item) + getsizeof(None)
@@ -1188,8 +1198,9 @@ def _typed_result_size(request, payload):
         from .observations import SchemaStatus
         from .rows import _decode_native_readiness_result_raw
 
-        _freeze_parameters(request.statement, request.parameters, request.context,
-                           _reject=_reject_validation)
+        _freeze_parameters(
+            request.statement, request.parameters, request.context, _reject=_reject_validation
+        )
         count = 1 if request.parameters[0] == "events" else 2
         if type(payload) is not tuple or len(payload) != count:
             _reject_validation()
@@ -1214,7 +1225,11 @@ def _typed_result_size(request, payload):
             _reject_validation()
         return size
     if request.statement is get_statement("E31") or request.statement is get_statement("E32"):
-        carrier = ResolutionObservation if request.statement is get_statement("E31") else SettlementObservation
+        carrier = (
+            ResolutionObservation
+            if request.statement is get_statement("E31")
+            else SettlementObservation
+        )
         if type(payload) is not carrier:
             _reject_validation()
         columns = request.statement.result.columns
@@ -1224,7 +1239,10 @@ def _typed_result_size(request, payload):
         )
         _decode_native_event_result_raw(request, (values,))
         return size
-    if any(request.statement is get_statement(key) for key in ("E05", "E06", "E08", "E09", "E10", "E11")):
+    if any(
+        request.statement is get_statement(key)
+        for key in ("E05", "E06", "E08", "E09", "E10", "E11")
+    ):
         columns = request.statement.result.columns
         if request.statement.key in ("E08", "E09"):
             if payload is None:
@@ -1910,10 +1928,14 @@ def _observe_native_result_paid(ticket, result, ledger, reservation):
         p = _ticket(ticket, ledger)
         b = _envelope(result, ledger, "B")
         if (
-            p is None or b is None or b["operation"] is not p.operation
+            p is None
+            or b is None
+            or b["operation"] is not p.operation
             or p.operation.get("issuer") is not reservation
-            or p.operation["state"] != "COMPLETED" or p.operation["running"]
-            or not b["populated"] or p.operation["result_stamp"] is not result._stamp
+            or p.operation["state"] != "COMPLETED"
+            or p.operation["running"]
+            or not b["populated"]
+            or p.operation["result_stamp"] is not result._stamp
         ):
             _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
         request = p.operation["prep"]["data"]
@@ -1943,8 +1965,13 @@ def _observe_native_result_paid(ticket, result, ledger, reservation):
             if eligible:
                 r["failure_disabled"] = True
             return
-        fence = (guard.work_id.int, guard.token.int, guard.ownership_revision,
-                 guard.cycle, guard.expected_attempt)
+        fence = (
+            guard.work_id.int,
+            guard.token.int,
+            guard.ownership_revision,
+            guard.cycle,
+            guard.expected_attempt,
+        )
         if r["failure_xid"] is None:
             return
         if request.statement is get_statement("E09") and not eligible:
@@ -2008,22 +2035,31 @@ def _failure_snapshot(request):
     _freeze_parameters(
         request.statement, request.parameters, request.context, _reject=_reject_validation
     )
+
     def scalar(value):
         if type(value) is UUID:
             return value.int
         if type(value) is datetime:
-            return (value.year, value.month, value.day, value.hour, value.minute,
-                    value.second, value.microsecond, value.fold)
+            return (
+                value.year,
+                value.month,
+                value.day,
+                value.hour,
+                value.minute,
+                value.second,
+                value.microsecond,
+                value.fold,
+            )
         return value
+
     return tuple(scalar(value) for value in request.parameters)
 
 
 def _snapshot_size(snapshot):
     # Every occurrence is counted, including shared reason/evidence bytes.
     return getsizeof(snapshot) + sum(
-        getsizeof(value) + (
-            sum(getsizeof(field) for field in value) if type(value) is tuple else 0
-        ) for value in snapshot
+        getsizeof(value) + (sum(getsizeof(field) for field in value) if type(value) is tuple else 0)
+        for value in snapshot
     )
 
 
@@ -2055,9 +2091,12 @@ def bind_failure_settlement(preparation, failed_root, rollback_receipt, /, *, ex
                 type(rollback_receipt) is not _Handle
                 or rollback_receipt._kind != "ROOT_END"
                 or r["receipt"] is not rollback_receipt
-                or r["state"] != "ENDED" or not r["ack"]
-                or not r["failure_verified"] or not r["failure_eligible"]
-                or r["failure_disabled"] or r["failure_consumed"]
+                or r["state"] != "ENDED"
+                or not r["ack"]
+                or not r["failure_verified"]
+                or not r["failure_eligible"]
+                or r["failure_disabled"]
+                or r["failure_consumed"]
                 or a.get("failure_binding") is not None
             ):
                 code = ErrorCode.INVALID_OBSERVATION
@@ -2071,9 +2110,14 @@ def bind_failure_settlement(preparation, failed_root, rollback_receipt, /, *, ex
                         code = ErrorCode.INVALID_OBSERVATION
                     else:
                         binding = _FailureBinding(
-                            failed_root, rollback_receipt, request, request.parameters,
-                            request.context, request.context.expected,
-                            request.context.expected[0], snapshot,
+                            failed_root,
+                            rollback_receipt,
+                            request,
+                            request.parameters,
+                            request.context,
+                            request.context.expected,
+                            request.context.expected[0],
+                            snapshot,
                         )
                         if _failure_binding_size(request, binding) > a["capacity"]:
                             code = ErrorCode.CAPACITY_EXCEEDED
@@ -2102,17 +2146,26 @@ def _failure_admission_error(p, r, a, ledger, *, uncertain):
         return ErrorCode.INVALID_OBSERVATION
     old_p, failed = _root(binding.root, ledger)
     if (
-        old_p is not p or failed is None or failed is r
-        or failed["state"] != "ENDED" or not failed["ack"]
-        or failed["receipt"] is not binding.receipt or not failed["failure_verified"]
-        or not failed["failure_eligible"] or failed["failure_disabled"]
+        old_p is not p
+        or failed is None
+        or failed is r
+        or failed["state"] != "ENDED"
+        or not failed["ack"]
+        or failed["receipt"] is not binding.receipt
+        or not failed["failure_verified"]
+        or not failed["failure_eligible"]
+        or failed["failure_disabled"]
         or failed["failure_consumed"]
         or failed["failure_preparation"] is not a["token"]._stamp
-        or a["x"] is not p.x or r["token"] is not p.current or r["state"] != "ACTIVE"
+        or a["x"] is not p.x
+        or r["token"] is not p.current
+        or r["state"] != "ACTIVE"
         or request is not binding.request
-        or request.parameters is not binding.parameters or request.context is not binding.context
+        or request.parameters is not binding.parameters
+        or request.context is not binding.context
         or request.context.expected is not binding.expected
-        or len(request.context.expected) != 1 or request.context.expected[0] is not binding.fence
+        or len(request.context.expected) != 1
+        or request.context.expected[0] is not binding.fence
     ):
         return ErrorCode.INVALID_OBSERVATION
     try:
@@ -2122,7 +2175,8 @@ def _failure_admission_error(p, r, a, ledger, *, uncertain):
             raise
         return ErrorCode.INVALID_OBSERVATION
     if (
-        snapshot != binding.snapshot or snapshot[:5] != failed["failure_fence"]
+        snapshot != binding.snapshot
+        or snapshot[:5] != failed["failure_fence"]
         or snapshot[5] != failed["failure_xid"]
     ):
         return ErrorCode.INVALID_OBSERVATION

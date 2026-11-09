@@ -1,13 +1,14 @@
 """Statement-local observations never clear an existing uncertain incident."""
+
 from dataclasses import dataclass
 from enum import Enum
 from .errors import ErrorCode, _boundary
 
 
 class OperationState(Enum):
-    NOT_SENT='not_sent'
-    SENT_UNCONFIRMED='sent_unconfirmed'
-    STAGED='staged'
+    NOT_SENT = "not_sent"
+    SENT_UNCONFIRMED = "sent_unconfirmed"
+    STAGED = "staged"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -18,7 +19,16 @@ class OperationObservation:
 
     @_boundary
     def __post_init__(self):
-        if type(self.key) is not str or self.key not in tuple(f'E{i:02d}' for i in range(1,35))+tuple(f'W{i:02d}' for i in range(1,6)) or type(self.state) is not OperationState or self.error_code is not None and type(self.error_code) is not ErrorCode:raise ValueError
+        if (
+            type(self.key) is not str
+            or self.key
+            not in tuple(f"E{i:02d}" for i in range(1, 35))
+            + tuple(f"W{i:02d}" for i in range(1, 6))
+            or type(self.state) is not OperationState
+            or self.error_code is not None
+            and type(self.error_code) is not ErrorCode
+        ):
+            raise ValueError
 
 
 def _valid_uncertainty(value):
@@ -30,11 +40,14 @@ def _valid_uncertainty(value):
 
 def _valid_uncertainty_fields(value):
     """Retain the public dataclass field-validation contract."""
-    present=getattr(value,'present',None)
-    categories=getattr(value,'categories',None)
-    return (type(present) is bool and type(categories) is frozenset
-            and all(type(code) is ErrorCode for code in categories)
-            and present==bool(categories))
+    present = getattr(value, "present", None)
+    categories = getattr(value, "categories", None)
+    return (
+        type(present) is bool
+        and type(categories) is frozenset
+        and all(type(code) is ErrorCode for code in categories)
+        and present == bool(categories)
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -44,36 +57,38 @@ class Uncertainty:
 
     @_boundary
     def __post_init__(self):
-        if not _valid_uncertainty_fields(self):raise ValueError
+        if not _valid_uncertainty_fields(self):
+            raise ValueError
 
 
 def _uncertainty_from_categories(categories):
     """Private raw allocation seam, shared by contextual and public boundaries."""
     if type(categories) is not frozenset or any(type(code) is not ErrorCode for code in categories):
         raise ValueError
-    result=object.__new__(Uncertainty)
-    object.__setattr__(result,'present',bool(categories))
-    object.__setattr__(result,'categories',categories)
+    result = object.__new__(Uncertainty)
+    object.__setattr__(result, "present", bool(categories))
+    object.__setattr__(result, "categories", categories)
     return result
 
 
-def _join_uncertainty(current,incoming):
+def _join_uncertainty(current, incoming):
     """Sole union implementation; callers choose their own error boundary."""
-    if not _valid_uncertainty(current) or not _valid_uncertainty(incoming):raise ValueError
-    return _uncertainty_from_categories(current.categories|incoming.categories)
+    if not _valid_uncertainty(current) or not _valid_uncertainty(incoming):
+        raise ValueError
+    return _uncertainty_from_categories(current.categories | incoming.categories)
 
 
 @_boundary
-def join_uncertainty(current,incoming):
-    return _join_uncertainty(current,incoming)
+def join_uncertainty(current, incoming):
+    return _join_uncertainty(current, incoming)
 
 
 from datetime import datetime
 from uuid import UUID
 from hashlib import sha256
 from .errors import _observation_boundary
-from .models import (ScopeEvidence, WorkIdentity, WorkKind, ReplayPolicy, AdmissionInput)
-from .bindings import (_bytes, _integer, _instant, version_from_decimal, canonical_intent)
+from .models import ScopeEvidence, WorkIdentity, WorkKind, ReplayPolicy, AdmissionInput
+from .bindings import _bytes, _integer, _instant, version_from_decimal, canonical_intent
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -160,6 +175,7 @@ class AdmissionRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -180,6 +196,7 @@ class GuardRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -195,6 +212,7 @@ class SubscriptionRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -217,6 +235,7 @@ class OutboxRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -236,6 +255,7 @@ class WorkHistoryRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -250,6 +270,7 @@ class DeliveryRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -268,6 +289,7 @@ class PublicationRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -288,6 +310,7 @@ class AttemptRow:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -310,6 +333,7 @@ class SettlementObservation:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -328,6 +352,7 @@ class RepairObservation:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -343,6 +368,7 @@ class SchemaStatus:
     @_observation_boundary
     def __post_init__(self):
         from .rows import _validate_record
+
         _validate_record(self)
 
 
@@ -357,6 +383,7 @@ class InboxObservation(WorkObservation):
     def __post_init__(self):
         WorkObservation.__post_init__(self)
         from .rows import _validate_inbox
+
         _validate_inbox(self, True)
 
 
@@ -372,12 +399,15 @@ class InboxCandidate(WorkObservation):
     def __post_init__(self):
         WorkObservation.__post_init__(self)
         from .rows import _validate_inbox
-        if type(self.inbox_half_present) is not bool:raise ValueError
-        _validate_inbox(self,self.inbox_half_present)
+
+        if type(self.inbox_half_present) is not bool:
+            raise ValueError
+        _validate_inbox(self, self.inbox_half_present)
 
 
 from typing import Generic, TypeVar
-_T = TypeVar('_T')
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -389,11 +419,19 @@ class ScanFrame:
 
     @_observation_boundary
     def __post_init__(self):
-        _integer(self.visited,0,4096)
-        if type(self.pass_exhausted) is not bool or type(self.item_columns) is not tuple or any(type(row) is not tuple for row in self.item_columns):raise ValueError
-        if self.next_cursor is not None and type(self.next_cursor) not in (UUID,bytes):raise ValueError
-        if type(self.next_cursor) is bytes and len(self.next_cursor)!=32:raise ValueError
-        if len(self.item_columns)>256 or len(self.item_columns)>self.visited:raise ValueError
+        _integer(self.visited, 0, 4096)
+        if (
+            type(self.pass_exhausted) is not bool
+            or type(self.item_columns) is not tuple
+            or any(type(row) is not tuple for row in self.item_columns)
+        ):
+            raise ValueError
+        if self.next_cursor is not None and type(self.next_cursor) not in (UUID, bytes):
+            raise ValueError
+        if type(self.next_cursor) is bytes and len(self.next_cursor) != 32:
+            raise ValueError
+        if len(self.item_columns) > 256 or len(self.item_columns) > self.visited:
+            raise ValueError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -405,10 +443,18 @@ class ScanPage(Generic[_T]):
 
     @_observation_boundary
     def __post_init__(self):
-        _integer(self.visited,0,4096)
-        if type(self.items) is not tuple or len(self.items)>256 or len(self.items)>self.visited or type(self.pass_exhausted) is not bool:raise ValueError
-        if self.next_cursor is not None and type(self.next_cursor) not in (UUID,bytes):raise ValueError
-        if type(self.next_cursor) is bytes and len(self.next_cursor)!=32:raise ValueError
+        _integer(self.visited, 0, 4096)
+        if (
+            type(self.items) is not tuple
+            or len(self.items) > 256
+            or len(self.items) > self.visited
+            or type(self.pass_exhausted) is not bool
+        ):
+            raise ValueError
+        if self.next_cursor is not None and type(self.next_cursor) not in (UUID, bytes):
+            raise ValueError
+        if type(self.next_cursor) is bytes and len(self.next_cursor) != 32:
+            raise ValueError
         # Concrete item ownership/type/identity validation is done by its decoder;
         # the generic page is an observation carrier, never execution authority.
 
@@ -424,9 +470,7 @@ def _validate_resolution_observation_core(self, *, _reject=None):
         _bytes_fn, _integer_fn, _instant_fn = _bytes_raw, _integer_raw, _instant_raw
         for value in (self.operation_id, self.work_id, self.dispatch_id):
             _uuid_raw(value)
-    if any(
-        type(x) is not UUID for x in (self.operation_id, self.work_id, self.dispatch_id)
-    ):
+    if any(type(x) is not UUID for x in (self.operation_id, self.work_id, self.dispatch_id)):
         _reject_scalar(_reject)
     from .catalog import MUTATION_OPERATION_KINDS
 
@@ -449,9 +493,7 @@ def _validate_resolution_observation_core(self, *, _reject=None):
     if self.result is not None:
         _retain_field(self, "result", _bytes_fn(self.result), _reject=_reject)
     if self.result_digest is not None:
-        _retain_field(
-            self, "result_digest", _bytes_fn(self.result_digest, 32), _reject=_reject
-        )
+        _retain_field(self, "result_digest", _bytes_fn(self.result_digest, 32), _reject=_reject)
     if self.outcome not in (
         "confirmed_success",
         "confirmed_rejection",
@@ -534,9 +576,7 @@ def _validate_work_observation_core(self, *, _reject=None):
             _reject_scalar(_reject)
     if type(self.work_id) is not UUID or type(self.cancellation_requested) is not bool:
         _reject_scalar(_reject)
-    if any(
-        type(value) is not str for value in (self.kind, self.state, self.replay_policy)
-    ):
+    if any(type(value) is not str for value in (self.kind, self.state, self.replay_policy)):
         _reject_scalar(_reject)
     if self.success_origin is not None and type(self.success_origin) is not str:
         _reject_scalar(_reject)
@@ -596,15 +636,11 @@ def _validate_work_observation_core(self, *, _reject=None):
     identity = identity_fn(
         work_id=self.work_id,
         kind=WorkKind(self.kind),
-        subscription_id=None
-        if self.subscription_id is None
-        else decode_text(self.subscription_id),
+        subscription_id=None if self.subscription_id is None else decode_text(self.subscription_id),
         namespace=decode_text(self.namespace),
         command_type=decode_text(self.command_type),
         scope=scope,
-        idempotency_key=None
-        if self.idempotency_key is None
-        else decode_text(self.idempotency_key),
+        idempotency_key=None if self.idempotency_key is None else decode_text(self.idempotency_key),
     )
     admission = admission_fn(
         identity=identity,

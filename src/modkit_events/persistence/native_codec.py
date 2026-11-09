@@ -34,7 +34,6 @@ class _SqlDescriptor:
     max_admitted_cell_payload_bytes: int
 
 
-
 _E33_SQL = b"""WITH source AS MATERIALIZED (
     SELECT s.component, s.version, s.migration_digest, s.catalog_contract_id,
            s.scope_format_id, s.intent_format_id
@@ -61,23 +60,37 @@ FROM checked AS c
 ORDER BY CASE WHEN pg_catalog.convert_to(c.component, 'UTF8') OPERATOR(pg_catalog.=) pg_catalog.convert_to('events', 'UTF8') THEN 0 ELSE 1 END
 LIMIT 3"""
 _E33_COLUMNS = (
-    _TransportColumn(name="cap_ok", wire_type=WireType.BOOL, oid=16,
-                     nullable=False, max_payload_bytes=1),
-    _TransportColumn(name="component", wire_type=WireType.BYTEA, oid=17,
-                     nullable=False, max_payload_bytes=7),
-    _TransportColumn(name="version", wire_type=WireType.INT4, oid=23,
-                     nullable=False, max_payload_bytes=4),
-    _TransportColumn(name="migration_digest", wire_type=WireType.BYTEA, oid=17,
-                     nullable=False, max_payload_bytes=32),
-    *tuple(_TransportColumn(name=name, wire_type=WireType.BYTEA, oid=17,
-                           nullable=False, max_payload_bytes=256)
-           for name in ("catalog_contract_id", "scope_format_id", "intent_format_id")),
+    _TransportColumn(
+        name="cap_ok", wire_type=WireType.BOOL, oid=16, nullable=False, max_payload_bytes=1
+    ),
+    _TransportColumn(
+        name="component", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=7
+    ),
+    _TransportColumn(
+        name="version", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="migration_digest",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=False,
+        max_payload_bytes=32,
+    ),
+    *tuple(
+        _TransportColumn(
+            name=name, wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=256
+        )
+        for name in ("catalog_contract_id", "scope_format_id", "intent_format_id")
+    ),
 )
 _E33 = _SqlDescriptor(
-    sql=_E33_SQL, parameter_casts=("pg_catalog.text",),
+    sql=_E33_SQL,
+    parameter_casts=("pg_catalog.text",),
     canonical_columns=get_statement("E33").result.columns,
-    transport_columns=_E33_COLUMNS, cardinality=CardinalityKind.READINESS,
-    sentinel_limit=3, max_admitted_cell_payload_bytes=812,
+    transport_columns=_E33_COLUMNS,
+    cardinality=CardinalityKind.READINESS,
+    sentinel_limit=3,
+    max_admitted_cell_payload_bytes=812,
 )
 
 _E05_SQL = b"""WITH source AS MATERIALIZED (
@@ -89,14 +102,26 @@ FROM source AS s
 LIMIT 2"""
 _E05 = _SqlDescriptor(
     sql=_E05_SQL,
-    parameter_casts=("pg_catalog.uuid", "pg_catalog.uuid", "pg_catalog.int8",
-                     "pg_catalog.int4", "pg_catalog.int4", "pg_catalog.float8"),
+    parameter_casts=(
+        "pg_catalog.uuid",
+        "pg_catalog.uuid",
+        "pg_catalog.int8",
+        "pg_catalog.int4",
+        "pg_catalog.int4",
+        "pg_catalog.float8",
+    ),
     canonical_columns=get_statement("E05").result.columns,
     transport_columns=(
-        _TransportColumn(name="cap_ok", wire_type=WireType.BOOL, oid=16,
-                         nullable=False, max_payload_bytes=1),
-        _TransportColumn(name="lease_until", wire_type=WireType.TIMESTAMPTZ, oid=1184,
-                         nullable=False, max_payload_bytes=8),
+        _TransportColumn(
+            name="cap_ok", wire_type=WireType.BOOL, oid=16, nullable=False, max_payload_bytes=1
+        ),
+        _TransportColumn(
+            name="lease_until",
+            wire_type=WireType.TIMESTAMPTZ,
+            oid=1184,
+            nullable=False,
+            max_payload_bytes=8,
+        ),
     ),
     cardinality=CardinalityKind.EXACT_ONE,
     sentinel_limit=2,
@@ -2006,25 +2031,76 @@ LIMIT 2"""
 
 _E32_COLUMNS = (
     _E14.transport_columns[0],
-    _TransportColumn(name="operation_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
-    _TransportColumn(name="work_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
-    _TransportColumn(name="token", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
-    _TransportColumn(name="expected_revision", wire_type=WireType.INT8, oid=20, nullable=False, max_payload_bytes=8),
-    _TransportColumn(name="cycle", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4),
-    _TransportColumn(name="attempt", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4),
-    _TransportColumn(name="dispatch_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
-    _TransportColumn(name="failed_business_root", wire_type=WireType.XID8, oid=5069, nullable=False, max_payload_bytes=8),
-    _TransportColumn(name="reason", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=256),
-    _TransportColumn(name="evidence", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576),
-    _TransportColumn(name="binding", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576),
-    _TransportColumn(name="resulting_revision", wire_type=WireType.INT8, oid=20, nullable=False, max_payload_bytes=8),
-    _TransportColumn(name="recorded_at", wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=False, max_payload_bytes=8),
+    _TransportColumn(
+        name="operation_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="work_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="token", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="expected_revision",
+        wire_type=WireType.INT8,
+        oid=20,
+        nullable=False,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="cycle", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="attempt", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="dispatch_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="failed_business_root",
+        wire_type=WireType.XID8,
+        oid=5069,
+        nullable=False,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="reason", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=256
+    ),
+    _TransportColumn(
+        name="evidence", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576
+    ),
+    _TransportColumn(
+        name="binding", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576
+    ),
+    _TransportColumn(
+        name="resulting_revision",
+        wire_type=WireType.INT8,
+        oid=20,
+        nullable=False,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="recorded_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=False,
+        max_payload_bytes=8,
+    ),
 )
 _E32 = _SqlDescriptor(
     sql=_E32_SQL,
-    parameter_casts=("pg_catalog.uuid", "pg_catalog.uuid", "pg_catalog.int8",
-                    "pg_catalog.int4", "pg_catalog.int4", "pg_catalog.text",
-                    "pg_catalog.uuid", "pg_catalog.text", "pg_catalog.bytea", "pg_catalog.bytea"),
+    parameter_casts=(
+        "pg_catalog.uuid",
+        "pg_catalog.uuid",
+        "pg_catalog.int8",
+        "pg_catalog.int4",
+        "pg_catalog.int4",
+        "pg_catalog.text",
+        "pg_catalog.uuid",
+        "pg_catalog.text",
+        "pg_catalog.bytea",
+        "pg_catalog.bytea",
+    ),
     canonical_columns=get_statement("E32").result.columns,
     transport_columns=_E32_COLUMNS,
     cardinality=CardinalityKind.EXACT_ONE,
@@ -2069,37 +2145,99 @@ SELECT c.cap_ok, c.operation_id,
 FROM checked AS c
 LIMIT 2"""
 _E31_COLUMNS = (
-    _TransportColumn(name="cap_ok", wire_type=WireType.BOOL, oid=16, nullable=False, max_payload_bytes=1),
-    _TransportColumn(name="operation_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
-    _TransportColumn(name="operation_kind", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=14),
-    _TransportColumn(name="work_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
-    _TransportColumn(name="expected_revision", wire_type=WireType.INT8, oid=20, nullable=False, max_payload_bytes=8),
-    _TransportColumn(name="cycle", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4),
-    _TransportColumn(name="attempt", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4),
-    _TransportColumn(name="dispatch_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16),
-    _TransportColumn(name="outcome", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=19),
-    _TransportColumn(name="retry_at", wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name="result", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name="result_digest", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=32),
-    _TransportColumn(name="reason", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=0),
-    _TransportColumn(name="evidence", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576),
-    _TransportColumn(name="binding", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576),
-    _TransportColumn(name="resolution_root_xid", wire_type=WireType.XID8, oid=5069, nullable=False, max_payload_bytes=8),
-    _TransportColumn(name="recorded_at", wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=False, max_payload_bytes=8),
+    _TransportColumn(
+        name="cap_ok", wire_type=WireType.BOOL, oid=16, nullable=False, max_payload_bytes=1
+    ),
+    _TransportColumn(
+        name="operation_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="operation_kind",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=False,
+        max_payload_bytes=14,
+    ),
+    _TransportColumn(
+        name="work_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="expected_revision",
+        wire_type=WireType.INT8,
+        oid=20,
+        nullable=False,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="cycle", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="attempt", wire_type=WireType.INT4, oid=23, nullable=False, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="dispatch_id", wire_type=WireType.UUID, oid=2950, nullable=False, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="outcome", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=19
+    ),
+    _TransportColumn(
+        name="retry_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="result", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576
+    ),
+    _TransportColumn(
+        name="result_digest", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=32
+    ),
+    _TransportColumn(
+        name="reason", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=0
+    ),
+    _TransportColumn(
+        name="evidence", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576
+    ),
+    _TransportColumn(
+        name="binding", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=1048576
+    ),
+    _TransportColumn(
+        name="resolution_root_xid",
+        wire_type=WireType.XID8,
+        oid=5069,
+        nullable=False,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="recorded_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=False,
+        max_payload_bytes=8,
+    ),
 )
 _E31 = _SqlDescriptor(
     sql=_E31_SQL,
-    parameter_casts=("pg_catalog.uuid", "pg_catalog.int8", "pg_catalog.int4",
-                     "pg_catalog.int4", "pg_catalog.uuid", "pg_catalog.uuid",
-                     "pg_catalog.text", "pg_catalog.timestamptz", "pg_catalog.bytea",
-                     "pg_catalog.bytea", "pg_catalog.bytea"),
+    parameter_casts=(
+        "pg_catalog.uuid",
+        "pg_catalog.int8",
+        "pg_catalog.int4",
+        "pg_catalog.int4",
+        "pg_catalog.uuid",
+        "pg_catalog.uuid",
+        "pg_catalog.text",
+        "pg_catalog.timestamptz",
+        "pg_catalog.bytea",
+        "pg_catalog.bytea",
+        "pg_catalog.bytea",
+    ),
     canonical_columns=get_statement("E31").result.columns,
     transport_columns=_E31_COLUMNS,
     cardinality=CardinalityKind.EXACT_ONE,
     sentinel_limit=2,
     max_admitted_cell_payload_bytes=sum(c.max_payload_bytes for c in _E31_COLUMNS),
 )
-
 
 
 # Fixed canonical E13 transport. All 60 cells survive; only oversized payloads are nulled.
@@ -2200,68 +2338,351 @@ SELECT c.cap_ok,
 FROM checked AS c
 ORDER BY c.record_type, c.work_id"""
 _E13_COLUMNS = (
-    _TransportColumn(name="cap_ok", wire_type=WireType.BOOL, oid=16, nullable=False, max_payload_bytes=1),
-    _TransportColumn(name='record_type', wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=6),
-    _TransportColumn(name='visited', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='next_cursor', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='pass_exhausted', wire_type=WireType.BOOL, oid=16, nullable=True, max_payload_bytes=1),
-    _TransportColumn(name='work_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='kind', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=5),
-    _TransportColumn(name='subscription_id', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='namespace', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='command_type', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='schema_version_decimal', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=4096),
-    _TransportColumn(name='runnable_version', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='canonical_version', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='scope_evidence', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=781),
-    _TransportColumn(name='scope_application', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='scope_tenant', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='scope_owner', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='idempotency_key', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='intent_evidence', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='semantic_input', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='replay_input', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='protected_binding', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='replay_policy', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='max_attempts', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='deadline', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='original_available_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='state', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=14),
-    _TransportColumn(name='cancellation_requested', wire_type=WireType.BOOL, oid=16, nullable=True, max_payload_bytes=1),
-    _TransportColumn(name='token', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='ownership_revision', wire_type=WireType.INT8, oid=20, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='lease_until', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='available_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='cycle', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='attempt_count', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='dispatch_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='result', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='created_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='updated_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='success_origin', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=10),
-    _TransportColumn(name='completion_guard_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='final_fence_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='completion_result_digest', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=32),
-    _TransportColumn(name='resolution_operation_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='terminal_resolution_operation_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='resolution_present', wire_type=WireType.BOOL, oid=16, nullable=True, max_payload_bytes=1),
-    _TransportColumn(name='resolution_record_operation_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='resolution_record_operation_kind', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=14),
-    _TransportColumn(name='resolution_record_work_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='resolution_record_expected_revision', wire_type=WireType.INT8, oid=20, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='resolution_record_cycle', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='resolution_record_attempt', wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4),
-    _TransportColumn(name='resolution_record_dispatch_id', wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16),
-    _TransportColumn(name='resolution_record_outcome', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=19),
-    _TransportColumn(name='resolution_record_retry_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='resolution_record_result', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='resolution_record_result_digest', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=32),
-    _TransportColumn(name='resolution_record_reason', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256),
-    _TransportColumn(name='resolution_record_evidence', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='resolution_record_binding', wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576),
-    _TransportColumn(name='resolution_record_resolution_root_xid', wire_type=WireType.XID8, oid=5069, nullable=True, max_payload_bytes=8),
-    _TransportColumn(name='resolution_record_recorded_at', wire_type=WireType.TIMESTAMPTZ, oid=1184, nullable=True, max_payload_bytes=8),
+    _TransportColumn(
+        name="cap_ok", wire_type=WireType.BOOL, oid=16, nullable=False, max_payload_bytes=1
+    ),
+    _TransportColumn(
+        name="record_type", wire_type=WireType.BYTEA, oid=17, nullable=False, max_payload_bytes=6
+    ),
+    _TransportColumn(
+        name="visited", wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="next_cursor", wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="pass_exhausted", wire_type=WireType.BOOL, oid=16, nullable=True, max_payload_bytes=1
+    ),
+    _TransportColumn(
+        name="work_id", wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="kind", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=5
+    ),
+    _TransportColumn(
+        name="subscription_id",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=256,
+    ),
+    _TransportColumn(
+        name="namespace", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256
+    ),
+    _TransportColumn(
+        name="command_type", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256
+    ),
+    _TransportColumn(
+        name="schema_version_decimal",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=4096,
+    ),
+    _TransportColumn(
+        name="runnable_version", wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="canonical_version",
+        wire_type=WireType.INT4,
+        oid=23,
+        nullable=True,
+        max_payload_bytes=4,
+    ),
+    _TransportColumn(
+        name="scope_evidence",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=781,
+    ),
+    _TransportColumn(
+        name="scope_application",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=256,
+    ),
+    _TransportColumn(
+        name="scope_tenant", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256
+    ),
+    _TransportColumn(
+        name="scope_owner", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=256
+    ),
+    _TransportColumn(
+        name="idempotency_key",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=256,
+    ),
+    _TransportColumn(
+        name="intent_evidence",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=1048576,
+    ),
+    _TransportColumn(
+        name="semantic_input",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=1048576,
+    ),
+    _TransportColumn(
+        name="replay_input",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=1048576,
+    ),
+    _TransportColumn(
+        name="protected_binding",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=1048576,
+    ),
+    _TransportColumn(
+        name="replay_policy", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="max_attempts", wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="deadline",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="original_available_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="state", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=14
+    ),
+    _TransportColumn(
+        name="cancellation_requested",
+        wire_type=WireType.BOOL,
+        oid=16,
+        nullable=True,
+        max_payload_bytes=1,
+    ),
+    _TransportColumn(
+        name="token", wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="ownership_revision",
+        wire_type=WireType.INT8,
+        oid=20,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="lease_until",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="available_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="cycle", wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="attempt_count", wire_type=WireType.INT4, oid=23, nullable=True, max_payload_bytes=4
+    ),
+    _TransportColumn(
+        name="dispatch_id", wire_type=WireType.UUID, oid=2950, nullable=True, max_payload_bytes=16
+    ),
+    _TransportColumn(
+        name="result", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=1048576
+    ),
+    _TransportColumn(
+        name="created_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="updated_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="success_origin", wire_type=WireType.BYTEA, oid=17, nullable=True, max_payload_bytes=10
+    ),
+    _TransportColumn(
+        name="completion_guard_id",
+        wire_type=WireType.UUID,
+        oid=2950,
+        nullable=True,
+        max_payload_bytes=16,
+    ),
+    _TransportColumn(
+        name="final_fence_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="completion_result_digest",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=32,
+    ),
+    _TransportColumn(
+        name="resolution_operation_id",
+        wire_type=WireType.UUID,
+        oid=2950,
+        nullable=True,
+        max_payload_bytes=16,
+    ),
+    _TransportColumn(
+        name="terminal_resolution_operation_id",
+        wire_type=WireType.UUID,
+        oid=2950,
+        nullable=True,
+        max_payload_bytes=16,
+    ),
+    _TransportColumn(
+        name="resolution_present",
+        wire_type=WireType.BOOL,
+        oid=16,
+        nullable=True,
+        max_payload_bytes=1,
+    ),
+    _TransportColumn(
+        name="resolution_record_operation_id",
+        wire_type=WireType.UUID,
+        oid=2950,
+        nullable=True,
+        max_payload_bytes=16,
+    ),
+    _TransportColumn(
+        name="resolution_record_operation_kind",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=14,
+    ),
+    _TransportColumn(
+        name="resolution_record_work_id",
+        wire_type=WireType.UUID,
+        oid=2950,
+        nullable=True,
+        max_payload_bytes=16,
+    ),
+    _TransportColumn(
+        name="resolution_record_expected_revision",
+        wire_type=WireType.INT8,
+        oid=20,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="resolution_record_cycle",
+        wire_type=WireType.INT4,
+        oid=23,
+        nullable=True,
+        max_payload_bytes=4,
+    ),
+    _TransportColumn(
+        name="resolution_record_attempt",
+        wire_type=WireType.INT4,
+        oid=23,
+        nullable=True,
+        max_payload_bytes=4,
+    ),
+    _TransportColumn(
+        name="resolution_record_dispatch_id",
+        wire_type=WireType.UUID,
+        oid=2950,
+        nullable=True,
+        max_payload_bytes=16,
+    ),
+    _TransportColumn(
+        name="resolution_record_outcome",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=19,
+    ),
+    _TransportColumn(
+        name="resolution_record_retry_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="resolution_record_result",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=1048576,
+    ),
+    _TransportColumn(
+        name="resolution_record_result_digest",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=32,
+    ),
+    _TransportColumn(
+        name="resolution_record_reason",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=256,
+    ),
+    _TransportColumn(
+        name="resolution_record_evidence",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=1048576,
+    ),
+    _TransportColumn(
+        name="resolution_record_binding",
+        wire_type=WireType.BYTEA,
+        oid=17,
+        nullable=True,
+        max_payload_bytes=1048576,
+    ),
+    _TransportColumn(
+        name="resolution_record_resolution_root_xid",
+        wire_type=WireType.XID8,
+        oid=5069,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
+    _TransportColumn(
+        name="resolution_record_recorded_at",
+        wire_type=WireType.TIMESTAMPTZ,
+        oid=1184,
+        nullable=True,
+        max_payload_bytes=8,
+    ),
 )
+
 
 def _selected_sql_descriptor(
     spec: StatementSpec, operation=None, *, request=None, max_page_payload_bytes=None
@@ -2355,8 +2776,13 @@ def _selected_sql_descriptor(
         limit = _validate_recovery_request(request)
         return _SqlDescriptor(
             sql=_E13_SQL,
-            parameter_casts=("pg_catalog.bytea", "pg_catalog.text", "pg_catalog.int4",
-                             "pg_catalog.uuid", "pg_catalog.int4"),
+            parameter_casts=(
+                "pg_catalog.bytea",
+                "pg_catalog.text",
+                "pg_catalog.int4",
+                "pg_catalog.uuid",
+                "pg_catalog.int4",
+            ),
             canonical_columns=spec.result.columns,
             transport_columns=_E13_COLUMNS,
             cardinality=CardinalityKind.SCAN,

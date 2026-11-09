@@ -1,19 +1,41 @@
 """Complete bounded row validation using canonical statement metadata."""
+
 from collections.abc import Sequence
 from uuid import UUID
 from hashlib import sha256
 from dataclasses import fields, dataclass
 from .errors import _observation_boundary, _reject_validation
-from .catalog import (get_statement, WireType, ColumnSpec, CardinalityKind, RecordKind,
-                      _validate_column_spec)
-from .bindings import (_scalar, _scalar_raw, _reject_scalar, _integer, _identifier, _bytes, _constraint,
-                       FrozenRequest, validate_event_replay, canonical_event, _snapshot_sequence,
-                       _integer_raw, _identifier_raw, _decode_utf8,
-                       _validate_event_replay_raw, _canonical_event_raw, _freeze_parameters)
+from .catalog import (
+    get_statement,
+    WireType,
+    ColumnSpec,
+    CardinalityKind,
+    RecordKind,
+    _validate_column_spec,
+)
+from .bindings import (
+    _scalar,
+    _scalar_raw,
+    _reject_scalar,
+    _integer,
+    _identifier,
+    _bytes,
+    _constraint,
+    FrozenRequest,
+    validate_event_replay,
+    canonical_event,
+    _snapshot_sequence,
+    _integer_raw,
+    _identifier_raw,
+    _decode_utf8,
+    _validate_event_replay_raw,
+    _canonical_event_raw,
+    _freeze_parameters,
+)
 from . import observations as O
+
 # Deliberate private dependency: schema owns the sole accepted code carriers.
-from .transitions import (_WORK_HISTORY_CODES, _PUBLICATION_HISTORY_CODES,
-                          _ATTEMPT_OUTCOME_CODES)
+from .transitions import _WORK_HISTORY_CODES, _PUBLICATION_HISTORY_CODES, _ATTEMPT_OUTCOME_CODES
 
 
 def _wire_scalar_core(value, wire_type, nullable, *, _reject=None):
@@ -21,9 +43,7 @@ def _wire_scalar_core(value, wire_type, nullable, *, _reject=None):
         if _reject is not None and (
             len(value) != 36
             or any(
-                char != "-"
-                if index in (8, 13, 18, 23)
-                else char not in "0123456789abcdef"
+                char != "-" if index in (8, 13, 18, 23) else char not in "0123456789abcdef"
                 for index, char in enumerate(value)
             )
         ):
@@ -57,10 +77,22 @@ def _wire_scalar_raw(value, wire_type, nullable):
 
 
 def _decode_columns_core(columns, values, *, _reject=None):
-    if (
-        _reject is not None
-        and not any(columns is get_statement(key).result.columns
-                    for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E13", "E14", "E28", "E31", "E32", "E33"))
+    if _reject is not None and not any(
+        columns is get_statement(key).result.columns
+        for key in (
+            "E05",
+            "E06",
+            "E08",
+            "E09",
+            "E10",
+            "E11",
+            "E13",
+            "E14",
+            "E28",
+            "E31",
+            "E32",
+            "E33",
+        )
     ):
         _reject_scalar(_reject)
     if (
@@ -149,14 +181,20 @@ def _request_raw(request):
     return _request_core(request, event=True, _reject=_reject_validation)
 
 
-def _maximum(request,p):
-    c=request.statement.result.cardinality
-    if c in (CardinalityKind.EXACT_ONE,CardinalityKind.OPTIONAL_ONE):return 1
-    if c is CardinalityKind.LIMIT:return p['limit']
-    if c is CardinalityKind.FIND_TWO:return 2
-    if c is CardinalityKind.FIND_THREE:return 3
-    if c is CardinalityKind.SCAN:return p['limit']+1
-    if c is CardinalityKind.READINESS:return 1 if p['required_profile']=='events' else 2
+def _maximum(request, p):
+    c = request.statement.result.cardinality
+    if c in (CardinalityKind.EXACT_ONE, CardinalityKind.OPTIONAL_ONE):
+        return 1
+    if c is CardinalityKind.LIMIT:
+        return p["limit"]
+    if c is CardinalityKind.FIND_TWO:
+        return 2
+    if c is CardinalityKind.FIND_THREE:
+        return 3
+    if c is CardinalityKind.SCAN:
+        return p["limit"] + 1
+    if c is CardinalityKind.READINESS:
+        return 1 if p["required_profile"] == "events" else 2
     raise ValueError
 
 
@@ -184,22 +222,51 @@ def _fetch(request, rows, p):
 
 
 @_observation_boundary
-def decode_work_observation(columns,/):
-    specs=get_statement('E15').result.columns
-    values=_decode_columns(specs,columns);data=dict(zip((c.name for c in specs),values))
-    present=data.pop('resolution_present');resolution={}
+def decode_work_observation(columns, /):
+    specs = get_statement("E15").result.columns
+    values = _decode_columns(specs, columns)
+    data = dict(zip((c.name for c in specs), values))
+    present = data.pop("resolution_present")
+    resolution = {}
     for name in tuple(data):
-        if name.startswith('resolution_record_'):resolution[name[len('resolution_record_'):]]=data.pop(name)
+        if name.startswith("resolution_record_"):
+            resolution[name[len("resolution_record_") :]] = data.pop(name)
     if present:
-        data['resolution']=O.ResolutionObservation(**resolution)
+        data["resolution"] = O.ResolutionObservation(**resolution)
     else:
-        if any(v is not None for v in resolution.values()):raise ValueError
-        data['resolution']=None
+        if any(v is not None for v in resolution.values()):
+            raise ValueError
+        data["resolution"] = None
     return O.WorkObservation(**data)
 
 
-_RECORD_KEYS={O.AdmissionRow:'E03',O.GuardRow:'E08',O.SubscriptionRow:'E18',O.OutboxRow:'E28',O.WorkHistoryRow:'E19',O.DeliveryRow:'E20',O.PublicationRow:'E29',O.AttemptRow:'E21',O.SettlementObservation:'E32',O.RepairObservation:'E27',O.SchemaStatus:'E33'}
-_RECORD_CLASSES={RecordKind.ADMISSION:O.AdmissionRow,RecordKind.GUARD:O.GuardRow,RecordKind.SUBSCRIPTION:O.SubscriptionRow,RecordKind.OUTBOX:O.OutboxRow,RecordKind.WORK_HISTORY:O.WorkHistoryRow,RecordKind.DELIVERY:O.DeliveryRow,RecordKind.PUBLICATION:O.PublicationRow,RecordKind.ATTEMPT:O.AttemptRow,RecordKind.RESOLUTION:O.ResolutionObservation,RecordKind.SETTLEMENT:O.SettlementObservation,RecordKind.REPAIR:O.RepairObservation,RecordKind.SCHEMA_STATUS:O.SchemaStatus}
+_RECORD_KEYS = {
+    O.AdmissionRow: "E03",
+    O.GuardRow: "E08",
+    O.SubscriptionRow: "E18",
+    O.OutboxRow: "E28",
+    O.WorkHistoryRow: "E19",
+    O.DeliveryRow: "E20",
+    O.PublicationRow: "E29",
+    O.AttemptRow: "E21",
+    O.SettlementObservation: "E32",
+    O.RepairObservation: "E27",
+    O.SchemaStatus: "E33",
+}
+_RECORD_CLASSES = {
+    RecordKind.ADMISSION: O.AdmissionRow,
+    RecordKind.GUARD: O.GuardRow,
+    RecordKind.SUBSCRIPTION: O.SubscriptionRow,
+    RecordKind.OUTBOX: O.OutboxRow,
+    RecordKind.WORK_HISTORY: O.WorkHistoryRow,
+    RecordKind.DELIVERY: O.DeliveryRow,
+    RecordKind.PUBLICATION: O.PublicationRow,
+    RecordKind.ATTEMPT: O.AttemptRow,
+    RecordKind.RESOLUTION: O.ResolutionObservation,
+    RecordKind.SETTLEMENT: O.SettlementObservation,
+    RecordKind.REPAIR: O.RepairObservation,
+    RecordKind.SCHEMA_STATUS: O.SchemaStatus,
+}
 
 
 @dataclass(slots=True)
@@ -225,9 +292,7 @@ def _validate_record_common(record, *, _reject=None):
     if hasattr(record, "history_id"):
         _integer(record.history_id, 1, 2**63 - 1)
     if hasattr(record, "ownership_revision"):
-        (_integer if _reject is None else _integer_raw)(
-            record.ownership_revision, 0, 2**63 - 1
-        )
+        (_integer if _reject is None else _integer_raw)(record.ownership_revision, 0, 2**63 - 1)
     if hasattr(record, "cycle"):
         _integer(record.cycle, 1, 1)
     if hasattr(record, "attempt"):
@@ -252,11 +317,7 @@ def _validate_record_common(record, *, _reject=None):
         from .catalog import ConstraintId
 
         _constraint(record.reason, ConstraintId.REASON)
-    if (
-        hasattr(record, "receipt")
-        and record.receipt is not None
-        and len(record.receipt) > 4096
-    ):
+    if hasattr(record, "receipt") and record.receipt is not None and len(record.receipt) > 4096:
         _reject_scalar(_reject)
 
 
@@ -285,17 +346,12 @@ def _validate_outbox_fields(record, *, _reject=None):
         _reject_scalar(_reject)
     owned = record.state in ("claimed", "publishing")
     if owned:
-        (_integer if _reject is None else _integer_raw)(
-            record.ownership_revision, 1, 2**63 - 1
-        )
+        (_integer if _reject is None else _integer_raw)(record.ownership_revision, 1, 2**63 - 1)
     if owned != (record.token is not None) or owned != (record.lease_until is not None):
         _reject_scalar(_reject)
     if record.state in ("pending", "claimed") and record.intent_id is not None:
         _reject_scalar(_reject)
-    if (
-        record.state in ("publishing", "published", "rejected", "held")
-        and record.intent_id is None
-    ):
+    if record.state in ("publishing", "published", "rejected", "held") and record.intent_id is None:
         _reject_scalar(_reject)
 
 
@@ -313,87 +369,156 @@ def _decode_outbox_raw(values):
 
 
 def _validate_record(record):
-    key=_RECORD_KEYS.get(type(record))
-    if key is None:raise ValueError
-    specs=get_statement(key).result.columns
-    values=_decode_columns(specs,tuple(getattr(record,c.name) for c in specs))
-    for column,value in zip(specs,values):object.__setattr__(record,column.name,value)
+    key = _RECORD_KEYS.get(type(record))
+    if key is None:
+        raise ValueError
+    specs = get_statement(key).result.columns
+    values = _decode_columns(specs, tuple(getattr(record, c.name) for c in specs))
+    for column, value in zip(specs, values):
+        object.__setattr__(record, column.name, value)
     _validate_record_common(record)
     if type(record) is O.GuardRow:
-        _integer(record.root_xid,1,2**64-1);_integer(record.ownership_revision,1,2**63-1);_integer(record.expected_attempt,1,1000)
-        certificate=(record.final_fence_at,record.terminal_state,record.result_digest)
+        _integer(record.root_xid, 1, 2**64 - 1)
+        _integer(record.ownership_revision, 1, 2**63 - 1)
+        _integer(record.expected_attempt, 1, 1000)
+        certificate = (record.final_fence_at, record.terminal_state, record.result_digest)
         if record.satisfied:
-            if any(v is None for v in certificate) or record.terminal_state!='succeeded' or len(record.result_digest)!=32:raise ValueError
-        elif any(v is not None for v in certificate):raise ValueError
+            if (
+                any(v is None for v in certificate)
+                or record.terminal_state != "succeeded"
+                or len(record.result_digest) != 32
+            ):
+                raise ValueError
+        elif any(v is not None for v in certificate):
+            raise ValueError
     elif type(record) is O.SubscriptionRow:
-        _integer(record.capacity,1,2147483647);_integer(record.nonterminal_count,0,record.capacity)
+        _integer(record.capacity, 1, 2147483647)
+        _integer(record.nonterminal_count, 0, record.capacity)
     elif type(record) is O.OutboxRow:
         _validate_outbox_fields(record)
     elif type(record) is O.WorkHistoryRow:
-        code=record.transition
-        if type(code) is not str or code not in _WORK_HISTORY_CODES:raise ValueError
-        intake=code in ('intake_runnable','intake_blocked')
-        owned=code in ('claim','renew','dispatch')
-        if owned!=(record.token is not None):raise ValueError
-        _integer(record.ownership_revision,0 if intake else 1,0 if intake else 2**63-1)
-        if intake:bounds=(0,0)
-        elif code in ('claim','defer','recover_claim'):bounds=(0,999)
-        elif code in ('failure_retry','reconcile_safe_retry'):bounds=(1,999)
-        elif code in ('renew','cancel_predispatch','recover_expired_predispatch'):bounds=(0,1000)
-        else:bounds=(1,1000)
-        _integer(record.attempt,*bounds)
-        submitted_reason=code in ('failure_terminal','failure_cancelled','failure_retry','cancel_predispatch','cancel_running','cancel_held','hold_uncertain')
+        code = record.transition
+        if type(code) is not str or code not in _WORK_HISTORY_CODES:
+            raise ValueError
+        intake = code in ("intake_runnable", "intake_blocked")
+        owned = code in ("claim", "renew", "dispatch")
+        if owned != (record.token is not None):
+            raise ValueError
+        _integer(record.ownership_revision, 0 if intake else 1, 0 if intake else 2**63 - 1)
+        if intake:
+            bounds = (0, 0)
+        elif code in ("claim", "defer", "recover_claim"):
+            bounds = (0, 999)
+        elif code in ("failure_retry", "reconcile_safe_retry"):
+            bounds = (1, 999)
+        elif code in ("renew", "cancel_predispatch", "recover_expired_predispatch"):
+            bounds = (0, 1000)
+        else:
+            bounds = (1, 1000)
+        _integer(record.attempt, *bounds)
+        submitted_reason = code in (
+            "failure_terminal",
+            "failure_cancelled",
+            "failure_retry",
+            "cancel_predispatch",
+            "cancel_running",
+            "cancel_held",
+            "hold_uncertain",
+        )
         if not submitted_reason:
-            expected_reason='attempts_exhausted' if code=='recover_exhausted_predispatch' else code
-            if record.reason!=expected_reason:raise ValueError
-        submitted_evidence=code.startswith(('failure_','reconcile_')) or code=='hold_uncertain'
-        if not submitted_evidence and record.evidence!=b'':raise ValueError
+            expected_reason = (
+                "attempts_exhausted" if code == "recover_exhausted_predispatch" else code
+            )
+            if record.reason != expected_reason:
+                raise ValueError
+        submitted_evidence = code.startswith(("failure_", "reconcile_")) or code == "hold_uncertain"
+        if not submitted_evidence and record.evidence != b"":
+            raise ValueError
     elif type(record) is O.PublicationRow:
-        code=record.status
-        if type(code) is not str or code not in _PUBLICATION_HISTORY_CODES:raise ValueError
-        repair=code in ('repair_published','repair_rejected')
-        if repair!=(record.operation_id is not None):raise ValueError
-        no_intent=code in ('enqueue','claim_publication','recover_publication_preintent')
-        if no_intent and record.intent_id is not None:raise ValueError
-        if not no_intent and code!='renew_publication' and record.intent_id is None:raise ValueError
-        settlement=repair or code in ('publication_confirmed','publication_rejected','publication_uncertain')
-        if not settlement and (record.receipt is not None or record.evidence!=b''):raise ValueError
-        if not repair and record.binding!=b'':raise ValueError
+        code = record.status
+        if type(code) is not str or code not in _PUBLICATION_HISTORY_CODES:
+            raise ValueError
+        repair = code in ("repair_published", "repair_rejected")
+        if repair != (record.operation_id is not None):
+            raise ValueError
+        no_intent = code in ("enqueue", "claim_publication", "recover_publication_preintent")
+        if no_intent and record.intent_id is not None:
+            raise ValueError
+        if not no_intent and code != "renew_publication" and record.intent_id is None:
+            raise ValueError
+        settlement = repair or code in (
+            "publication_confirmed",
+            "publication_rejected",
+            "publication_uncertain",
+        )
+        if not settlement and (record.receipt is not None or record.evidence != b""):
+            raise ValueError
+        if not repair and record.binding != b"":
+            raise ValueError
     elif type(record) is O.AttemptRow:
-        if type(record.outcome) is not str or record.outcome not in _ATTEMPT_OUTCOME_CODES:raise ValueError
+        if type(record.outcome) is not str or record.outcome not in _ATTEMPT_OUTCOME_CODES:
+            raise ValueError
         # Other outcomes have multiple possible producers; do not invent provenance.
-        if record.outcome in ('dispatched','cancelled_unresolved') and record.evidence!=b'':raise ValueError
-    elif type(record) in (O.SettlementObservation,O.RepairObservation):
-        _integer(record.expected_revision,0,2**63-1);_integer(record.resulting_revision,1,2**63-1)
-        if record.resulting_revision<=record.expected_revision:raise ValueError
-        if type(record) is O.RepairObservation and record.status not in ('published','rejected'):raise ValueError
+        if record.outcome in ("dispatched", "cancelled_unresolved") and record.evidence != b"":
+            raise ValueError
+    elif type(record) in (O.SettlementObservation, O.RepairObservation):
+        _integer(record.expected_revision, 0, 2**63 - 1)
+        _integer(record.resulting_revision, 1, 2**63 - 1)
+        if record.resulting_revision <= record.expected_revision:
+            raise ValueError
+        if type(record) is O.RepairObservation and record.status not in ("published", "rejected"):
+            raise ValueError
     elif type(record) is O.SchemaStatus:
-        if record.component not in ('events','workers') or len(record.migration_digest)!=32:raise ValueError
-        _integer(record.version,1,2147483647)
-        for value in (record.catalog_contract_id,record.scope_format_id,record.intent_format_id):_identifier(value)
+        if record.component not in ("events", "workers") or len(record.migration_digest) != 32:
+            raise ValueError
+        _integer(record.version, 1, 2147483647)
+        for value in (record.catalog_contract_id, record.scope_format_id, record.intent_format_id):
+            _identifier(value)
 
 
-def _validate_inbox(record,present):
-    names=('inbox_subscription_id','original_event_id','envelope_evidence','original_replay_input')
-    if record.kind!='inbox':
-        if present or any(getattr(record,n) is not None for n in names):raise ValueError
+def _validate_inbox(record, present):
+    names = (
+        "inbox_subscription_id",
+        "original_event_id",
+        "envelope_evidence",
+        "original_replay_input",
+    )
+    if record.kind != "inbox":
+        if present or any(getattr(record, n) is not None for n in names):
+            raise ValueError
         return
-    if not present:raise ValueError
-    for name in names:object.__setattr__(record,name,_bytes(getattr(record,name)))
-    _identifier(record.inbox_subscription_id.decode('utf8'));_identifier(record.original_event_id.decode('utf8'))
-    event=validate_event_replay(record.original_replay_input)
-    if record.subscription_id!=record.inbox_subscription_id or event.event_id.encode('utf8')!=record.original_event_id or canonical_event(event).content!=record.envelope_evidence or record.semantic_input!=record.envelope_evidence:raise ValueError
-    if canonical_event(validate_event_replay(record.replay_input)).content!=record.envelope_evidence:raise ValueError
+    if not present:
+        raise ValueError
+    for name in names:
+        object.__setattr__(record, name, _bytes(getattr(record, name)))
+    _identifier(record.inbox_subscription_id.decode("utf8"))
+    _identifier(record.original_event_id.decode("utf8"))
+    event = validate_event_replay(record.original_replay_input)
+    if (
+        record.subscription_id != record.inbox_subscription_id
+        or event.event_id.encode("utf8") != record.original_event_id
+        or canonical_event(event).content != record.envelope_evidence
+        or record.semantic_input != record.envelope_evidence
+    ):
+        raise ValueError
+    if (
+        canonical_event(validate_event_replay(record.replay_input)).content
+        != record.envelope_evidence
+    ):
+        raise ValueError
 
 
-def _record(kind,specs,row):
-    if kind is RecordKind.WORK:return decode_work_observation(row)
-    if kind in (RecordKind.INBOX,RecordKind.INBOX_CANDIDATE):
-        width=len(get_statement('E15').result.columns);work=decode_work_observation(row[:width])
-        data={f.name:getattr(work,f.name) for f in fields(O.WorkObservation)}
-        data.update(zip((c.name for c in specs[width:]),row[width:]))
+def _record(kind, specs, row):
+    if kind is RecordKind.WORK:
+        return decode_work_observation(row)
+    if kind in (RecordKind.INBOX, RecordKind.INBOX_CANDIDATE):
+        width = len(get_statement("E15").result.columns)
+        work = decode_work_observation(row[:width])
+        data = {f.name: getattr(work, f.name) for f in fields(O.WorkObservation)}
+        data.update(zip((c.name for c in specs[width:]), row[width:]))
         return (O.InboxObservation if kind is RecordKind.INBOX else O.InboxCandidate)(**data)
-    if kind in _RECORD_CLASSES:return _RECORD_CLASSES[kind](**dict(zip((c.name for c in specs),row)))
+    if kind in _RECORD_CLASSES:
+        return _RECORD_CLASSES[kind](**dict(zip((c.name for c in specs), row)))
     return _scalar_record(kind, row)
 
 
@@ -423,17 +548,26 @@ def _scalar_record(kind, row, *, _reject=None):
     return value
 
 
-def _key_path(work,p):
-    if p.get('idempotency_key') is None or work.idempotency_key is None:return False
-    return (work.kind==p['kind'] and work.subscription_id==p['subscription_id'] and work.namespace==p['namespace'] and work.command_type==p['command_type'] and sha256(work.scope_evidence).digest()==sha256(p['scope_evidence']).digest() and sha256(work.idempotency_key).digest()==sha256(p['idempotency_key']).digest())
+def _key_path(work, p):
+    if p.get("idempotency_key") is None or work.idempotency_key is None:
+        return False
+    return (
+        work.kind == p["kind"]
+        and work.subscription_id == p["subscription_id"]
+        and work.namespace == p["namespace"]
+        and work.command_type == p["command_type"]
+        and sha256(work.scope_evidence).digest() == sha256(p["scope_evidence"]).digest()
+        and sha256(work.idempotency_key).digest() == sha256(p["idempotency_key"]).digest()
+    )
 
 
-def _unique_order(items,key,after=None):
-    prior=after
+def _unique_order(items, key, after=None):
+    prior = after
     for item in items:
-        current=key(item)
-        if prior is not None and current<=prior:raise ValueError
-        prior=current
+        current = key(item)
+        if prior is not None and current <= prior:
+            raise ValueError
+        prior = current
 
 
 def _couple_event_id(p, items, *, _reject=None):
@@ -441,102 +575,191 @@ def _couple_event_id(p, items, *, _reject=None):
         _reject_scalar(_reject)
 
 
-def _couple(request,p,items):
-    key=request.statement.key
-    if key=='E03' and items[0].inserted and items[0].work_id!=p['work_id']:raise ValueError
-    if key=='E06' and items[0]!=p['expected_attempt']+1:raise ValueError
-    if key in ('E08','E09'):
+def _couple(request, p, items):
+    key = request.statement.key
+    if key == "E03" and items[0].inserted and items[0].work_id != p["work_id"]:
+        raise ValueError
+    if key == "E06" and items[0] != p["expected_attempt"] + 1:
+        raise ValueError
+    if key in ("E08", "E09"):
         for item in items:
-            if item.satisfied:raise ValueError
-            if any(getattr(item,n)!=p[n] for n in ('work_id','token','ownership_revision','cycle','expected_attempt')):raise ValueError
-    if key in ('E15','E19','E20','E21'):
-        if any(item.work_id!=p['work_id'] for item in items):raise ValueError
-    if key=='E16':
-        if any(item.inbox_subscription_id!=p['subscription_id'] or item.original_event_id!=p['event_id'] for item in items):raise ValueError
-    if key in ('E17','E34'):
-        _unique_order(items,lambda item:item.work_id)
+            if item.satisfied:
+                raise ValueError
+            if any(
+                getattr(item, n) != p[n]
+                for n in ("work_id", "token", "ownership_revision", "cycle", "expected_attempt")
+            ):
+                raise ValueError
+    if key in ("E15", "E19", "E20", "E21"):
+        if any(item.work_id != p["work_id"] for item in items):
+            raise ValueError
+    if key == "E16":
+        if any(
+            item.inbox_subscription_id != p["subscription_id"]
+            or item.original_event_id != p["event_id"]
+            for item in items
+        ):
+            raise ValueError
+    if key in ("E17", "E34"):
+        _unique_order(items, lambda item: item.work_id)
         for item in items:
-            direct=item.work_id==p['work_id'];scoped=_key_path(item,p)
-            event=(key=='E34' and item.kind=='inbox' and item.inbox_subscription_id==p['subscription_id'] and sha256(item.original_event_id).digest()==sha256(p['original_event_id']).digest())
-            if not (direct or scoped or event):raise ValueError
-    if key=='E18' and any(item.subscription_id!=p['subscription_id'] for item in items):raise ValueError
-    if key in ('E19','E20','E29'):_unique_order(items,lambda item:item.history_id,p['after_id'])
-    if key=='E21':_unique_order(items,lambda item:(item.cycle,item.attempt),(p['after_cycle'],p['after_attempt']))
-    if key in ('E28','E29'):_couple_event_id(p,items)
-    if key=='E30':
-        if any(item.namespace!=p['namespace'] for item in items):raise ValueError
-        after=None if p['after_created_at'] is None else (p['after_created_at'],p['after_work_id'])
-        _unique_order(items,lambda item:(item.created_at,item.work_id),after)
-    if key in ('E27','E31','E32'):
-        item=items[0]
-        for name,value in p.items():
-            target='expected_revision' if key=='E32' and name=='ownership_revision' else 'attempt' if key=='E32' and name=='expected_attempt' else name
-            if not hasattr(item,target) or getattr(item,target)!=value:raise ValueError
-    if key=='E33':
-        expected=('events',) if p['required_profile']=='events' else ('events','workers')
-        if tuple(item.component for item in items)!=expected:raise ValueError
+            direct = item.work_id == p["work_id"]
+            scoped = _key_path(item, p)
+            event = (
+                key == "E34"
+                and item.kind == "inbox"
+                and item.inbox_subscription_id == p["subscription_id"]
+                and sha256(item.original_event_id).digest()
+                == sha256(p["original_event_id"]).digest()
+            )
+            if not (direct or scoped or event):
+                raise ValueError
+    if key == "E18" and any(item.subscription_id != p["subscription_id"] for item in items):
+        raise ValueError
+    if key in ("E19", "E20", "E29"):
+        _unique_order(items, lambda item: item.history_id, p["after_id"])
+    if key == "E21":
+        _unique_order(
+            items, lambda item: (item.cycle, item.attempt), (p["after_cycle"], p["after_attempt"])
+        )
+    if key in ("E28", "E29"):
+        _couple_event_id(p, items)
+    if key == "E30":
+        if any(item.namespace != p["namespace"] for item in items):
+            raise ValueError
+        after = (
+            None if p["after_created_at"] is None else (p["after_created_at"], p["after_work_id"])
+        )
+        _unique_order(items, lambda item: (item.created_at, item.work_id), after)
+    if key in ("E27", "E31", "E32"):
+        item = items[0]
+        for name, value in p.items():
+            target = (
+                "expected_revision"
+                if key == "E32" and name == "ownership_revision"
+                else "attempt"
+                if key == "E32" and name == "expected_attempt"
+                else name
+            )
+            if not hasattr(item, target) or getattr(item, target) != value:
+                raise ValueError
+    if key == "E33":
+        expected = ("events",) if p["required_profile"] == "events" else ("events", "workers")
+        if tuple(item.component for item in items) != expected:
+            raise ValueError
 
 
 @_observation_boundary
-def split_scan_rows(request,rows,/):
-    p=_request(request);kind=request.statement.result.record
-    if request.statement.result.cardinality is not CardinalityKind.SCAN or kind not in (RecordKind.WORK_SCAN,RecordKind.OUTBOX_SCAN,RecordKind.JOB_SCAN):raise ValueError
-    if request.statement.key not in ('E04','E13','E22','E26','W05'):raise ValueError
-    fetched=_fetch(request,rows,p)
-    if not fetched:raise ValueError
-    header=fetched[0]
-    if header[0]!='header' or header[1] is None or header[3] is None or any(v is not None for v in header[4:]):raise ValueError
-    visited=_integer(header[1],0,p['discovery_budget']);cursor=header[2];exhausted=header[3]
-    if type(exhausted) is not bool:raise ValueError
-    incoming=p['scan_after'];raw_items=fetched[1:]
-    if len(raw_items)>p['limit'] or len(raw_items)>visited:raise ValueError
-    if visited==0:
-        if raw_items or cursor!=incoming:raise ValueError
-    elif cursor is None or incoming is not None and cursor<=incoming:raise ValueError
-    if exhausted and (visited>=p['discovery_budget'] or len(raw_items)>=p['limit']):raise ValueError
-    if kind is RecordKind.OUTBOX_SCAN and cursor is not None and len(cursor)!=32:raise ValueError
-    output=[];prior=incoming
+def split_scan_rows(request, rows, /):
+    p = _request(request)
+    kind = request.statement.result.record
+    if request.statement.result.cardinality is not CardinalityKind.SCAN or kind not in (
+        RecordKind.WORK_SCAN,
+        RecordKind.OUTBOX_SCAN,
+        RecordKind.JOB_SCAN,
+    ):
+        raise ValueError
+    if request.statement.key not in ("E04", "E13", "E22", "E26", "W05"):
+        raise ValueError
+    fetched = _fetch(request, rows, p)
+    if not fetched:
+        raise ValueError
+    header = fetched[0]
+    if (
+        header[0] != "header"
+        or header[1] is None
+        or header[3] is None
+        or any(v is not None for v in header[4:])
+    ):
+        raise ValueError
+    visited = _integer(header[1], 0, p["discovery_budget"])
+    cursor = header[2]
+    exhausted = header[3]
+    if type(exhausted) is not bool:
+        raise ValueError
+    incoming = p["scan_after"]
+    raw_items = fetched[1:]
+    if len(raw_items) > p["limit"] or len(raw_items) > visited:
+        raise ValueError
+    if visited == 0:
+        if raw_items or cursor != incoming:
+            raise ValueError
+    elif cursor is None or incoming is not None and cursor <= incoming:
+        raise ValueError
+    if exhausted and (visited >= p["discovery_budget"] or len(raw_items) >= p["limit"]):
+        raise ValueError
+    if kind is RecordKind.OUTBOX_SCAN and cursor is not None and len(cursor) != 32:
+        raise ValueError
+    output = []
+    prior = incoming
     for row in raw_items:
-        if row[0]!='item' or any(v is not None for v in row[1:4]):raise ValueError
-        item_columns=row[4:]
-        if kind in (RecordKind.WORK_SCAN,RecordKind.JOB_SCAN):
-            work=decode_work_observation(item_columns[:len(get_statement('E15').result.columns)])
-            expected_kind='job' if kind is RecordKind.JOB_SCAN else p['kind']
-            if work.kind!=expected_kind or work.namespace!=p['namespace']:raise ValueError
-            if request.statement.key in ('E04','W05'):
-                if work.state!='claimed' or (work.command_type,work.runnable_version) not in tuple(zip(p['command_types'],p['schema_versions'])):raise ValueError
-            elif work.state not in ('queued','expired','failed','cancelled','held'):raise ValueError
-            current=work.work_id
+        if row[0] != "item" or any(v is not None for v in row[1:4]):
+            raise ValueError
+        item_columns = row[4:]
+        if kind in (RecordKind.WORK_SCAN, RecordKind.JOB_SCAN):
+            work = decode_work_observation(item_columns[: len(get_statement("E15").result.columns)])
+            expected_kind = "job" if kind is RecordKind.JOB_SCAN else p["kind"]
+            if work.kind != expected_kind or work.namespace != p["namespace"]:
+                raise ValueError
+            if request.statement.key in ("E04", "W05"):
+                if work.state != "claimed" or (
+                    work.command_type,
+                    work.runnable_version,
+                ) not in tuple(zip(p["command_types"], p["schema_versions"])):
+                    raise ValueError
+            elif work.state not in ("queued", "expired", "failed", "cancelled", "held"):
+                raise ValueError
+            current = work.work_id
         else:
-            item=_record(RecordKind.OUTBOX,get_statement('E28').result.columns,item_columns)
-            if request.statement.key=='E22' and item.state!='claimed':raise ValueError
-            if request.statement.key=='E26' and item.state not in ('pending','held'):raise ValueError
-            current=sha256(item.event_id).digest()
-        if prior is not None and current<=prior or cursor is None or current>cursor:raise ValueError
-        prior=current;output.append(item_columns)
-    return O.ScanFrame(visited=visited,next_cursor=cursor,pass_exhausted=exhausted,item_columns=tuple(output))
+            item = _record(RecordKind.OUTBOX, get_statement("E28").result.columns, item_columns)
+            if request.statement.key == "E22" and item.state != "claimed":
+                raise ValueError
+            if request.statement.key == "E26" and item.state not in ("pending", "held"):
+                raise ValueError
+            current = sha256(item.event_id).digest()
+        if prior is not None and current <= prior or cursor is None or current > cursor:
+            raise ValueError
+        prior = current
+        output.append(item_columns)
+    return O.ScanFrame(
+        visited=visited, next_cursor=cursor, pass_exhausted=exhausted, item_columns=tuple(output)
+    )
 
 
 @_observation_boundary
-def decode_scan_page(request,rows,/,*,item_kind):
-    if type(item_kind) is not RecordKind:raise ValueError
-    expected={RecordKind.WORK_SCAN:RecordKind.WORK,RecordKind.OUTBOX_SCAN:RecordKind.OUTBOX}.get(request.statement.result.record)
-    if item_kind is not expected:raise ValueError
-    frame=split_scan_rows(request,rows)
-    specs=get_statement('E15' if item_kind is RecordKind.WORK else 'E28').result.columns
-    items=tuple(_record(item_kind,specs,row) for row in frame.item_columns)
-    return O.ScanPage(items=items,visited=frame.visited,next_cursor=frame.next_cursor,pass_exhausted=frame.pass_exhausted)
+def decode_scan_page(request, rows, /, *, item_kind):
+    if type(item_kind) is not RecordKind:
+        raise ValueError
+    expected = {
+        RecordKind.WORK_SCAN: RecordKind.WORK,
+        RecordKind.OUTBOX_SCAN: RecordKind.OUTBOX,
+    }.get(request.statement.result.record)
+    if item_kind is not expected:
+        raise ValueError
+    frame = split_scan_rows(request, rows)
+    specs = get_statement("E15" if item_kind is RecordKind.WORK else "E28").result.columns
+    items = tuple(_record(item_kind, specs, row) for row in frame.item_columns)
+    return O.ScanPage(
+        items=items,
+        visited=frame.visited,
+        next_cursor=frame.next_cursor,
+        pass_exhausted=frame.pass_exhausted,
+    )
 
 
 @_observation_boundary
-def _decode_event_rows_core(request,rows):
-    p=_request(request,event=True);spec=request.statement.result
+def _decode_event_rows_core(request, rows):
+    p = _request(request, event=True)
+    spec = request.statement.result
     if spec.cardinality is CardinalityKind.SCAN:
-        kind={RecordKind.WORK_SCAN:RecordKind.WORK,RecordKind.OUTBOX_SCAN:RecordKind.OUTBOX}.get(spec.record)
-        return decode_scan_page(request,rows,item_kind=kind)
-    fetched=_fetch(request,rows,p)
-    items=tuple(_record(spec.record,spec.columns,row) for row in fetched)
-    _couple(request,p,items)
+        kind = {
+            RecordKind.WORK_SCAN: RecordKind.WORK,
+            RecordKind.OUTBOX_SCAN: RecordKind.OUTBOX,
+        }.get(spec.record)
+        return decode_scan_page(request, rows, item_kind=kind)
+    fetched = _fetch(request, rows, p)
+    items = tuple(_record(spec.record, spec.columns, row) for row in fetched)
+    _couple(request, p, items)
     return _finish_event_rows(spec, items)
 
 
@@ -551,7 +774,8 @@ def _finish_event_rows(spec, items):
 def _decode_event_rows_raw(request, rows):
     """Compose the fixed selected Events row graph without public sanitizers."""
     if type(request) is FrozenRequest and any(
-        request.statement is get_statement(key) for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
+        request.statement is get_statement(key)
+        for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
     ):
         return _decode_native_event_result_raw(request, rows)
     p = _request_raw(request)
@@ -576,11 +800,12 @@ def _decode_event_rows_raw(request, rows):
     return _finish_event_rows(spec, items)
 
 
-def decode_event_rows(request,rows,/):
-    result=_decode_event_rows_core(request,rows)
-    if request.statement.key=='E33' and result!=request.context.readiness.components:
-        from .errors import _fail,ErrorCode
-        _fail(ErrorCode.SCHEMA_MISMATCH,unconfirmed=False)
+def decode_event_rows(request, rows, /):
+    result = _decode_event_rows_core(request, rows)
+    if request.statement.key == "E33" and result != request.context.readiness.components:
+        from .errors import _fail, ErrorCode
+
+        _fail(ErrorCode.SCHEMA_MISMATCH, unconfirmed=False)
     return result
 
 
@@ -590,8 +815,7 @@ def _decode_work_observation_raw(values, /):
     if type(values) is not tuple or len(values) != 56:
         _reject_validation()
     values = tuple(
-        _wire_scalar_raw(value, col.wire_type, col.nullable)
-        for value, col in zip(values, columns)
+        _wire_scalar_raw(value, col.wire_type, col.nullable) for value, col in zip(values, columns)
     )
     data = dict(zip((col.name for col in columns), values))
     present = data.pop("resolution_present")
@@ -617,8 +841,11 @@ def _decode_guard_raw(values, /):
     _integer_raw(decoded[6], 1, 1000)
     certificate = decoded[8:]
     if decoded[7]:
-        if (any(value is None for value in certificate)
-                or decoded[9] != "succeeded" or len(decoded[10]) != 32):
+        if (
+            any(value is None for value in certificate)
+            or decoded[9] != "succeeded"
+            or len(decoded[10]) != 32
+        ):
             _reject_validation()
     elif any(value is not None for value in certificate):
         _reject_validation()
@@ -637,12 +864,17 @@ def _decode_native_event_result_raw(request, rows, /):
     if type(request) is not FrozenRequest:
         _reject_validation()
     statement = request.statement
-    key = next((key for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
-                if statement is get_statement(key)), None)
+    key = next(
+        (
+            key
+            for key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
+            if statement is get_statement(key)
+        ),
+        None,
+    )
     if key is None:
         _reject_validation()
-    _freeze_parameters(statement, request.parameters, request.context,
-                       _reject=_reject_validation)
+    _freeze_parameters(statement, request.parameters, request.context, _reject=_reject_validation)
     if type(rows) is not tuple or len(rows) > 1 or (key != "E09" and len(rows) != 1):
         _reject_validation()
     if not rows:
@@ -662,12 +894,11 @@ def _decode_native_event_result_raw(request, rows, /):
     if key == "E31":
         # Historical receipts retain their original root and immutable request.
         positions = (2, 3, 4, 5, 6, 0, 7, 8, 9, 12, 13)
-        if any(values[index] != value
-               for index, value in zip(positions, request.parameters)):
+        if any(values[index] != value for index, value in zip(positions, request.parameters)):
             _reject_validation()
-        return O._resolution_observation_raw(**dict(
-            zip((column.name for column in statement.result.columns), values)
-        ))
+        return O._resolution_observation_raw(
+            **dict(zip((column.name for column in statement.result.columns), values))
+        )
     if key == "E32":
         # Canonical settlement parity: historical receipts need not describe
         # today's dispatch. Couple the complete immutable request, not W02.
@@ -682,8 +913,7 @@ def _decode_native_event_result_raw(request, rows, /):
 
         _constraint_raw(values[8], ConstraintId.REASON)
         positions = (1, 2, 3, 4, 5, 7, 0, 8, 9, 10)
-        if any(values[index] != value
-               for index, value in zip(positions, request.parameters)):
+        if any(values[index] != value for index, value in zip(positions, request.parameters)):
             _reject_validation()
         result = object.__new__(O.SettlementObservation)
         for column, value in zip(statement.result.columns, values):
@@ -692,8 +922,10 @@ def _decode_native_event_result_raw(request, rows, /):
     result = _decode_guard_raw(values)
     if result.satisfied or any(
         getattr(result, name) != value
-        for name, value in zip(("work_id", "token", "ownership_revision", "cycle",
-                                "expected_attempt"), request.parameters)
+        for name, value in zip(
+            ("work_id", "token", "ownership_revision", "cycle", "expected_attempt"),
+            request.parameters,
+        )
     ):
         _reject_validation()
     return result
@@ -703,8 +935,9 @@ def _decode_native_readiness_result_raw(request, rows, /):
     """Validate a complete E33 observation without nested public boundaries."""
     if type(request) is not FrozenRequest or request.statement is not get_statement("E33"):
         _reject_validation()
-    _freeze_parameters(request.statement, request.parameters, request.context,
-                       _reject=_reject_validation)
+    _freeze_parameters(
+        request.statement, request.parameters, request.context, _reject=_reject_validation
+    )
     expected = ("events",) if request.parameters[0] == "events" else ("events", "workers")
     if type(rows) is not tuple or len(rows) != len(expected):
         _reject_validation()
@@ -724,6 +957,7 @@ def _decode_native_readiness_result_raw(request, rows, /):
         result.append(status)
     return tuple(result)
 
+
 def _validate_recovery_page_raw(request, page, /):
     """Revalidate the ORIGINAL full retained graph; never normalize a replacement."""
     from .managed_lifecycle import _retained_scalar_size
@@ -737,9 +971,14 @@ def _validate_recovery_page_raw(request, page, /):
     _retained_scalar_size(page.visited, columns[1])
     _retained_scalar_size(page.next_cursor, columns[2])
     _retained_scalar_size(page.pass_exhausted, columns[3])
-    if (type(page.items) is not tuple or len(page.items) > limit
-            or type(page.visited) is not int or not 0 <= page.visited <= request.parameters[4]
-            or type(page.pass_exhausted) is not bool or len(page.items) > page.visited):
+    if (
+        type(page.items) is not tuple
+        or len(page.items) > limit
+        or type(page.visited) is not int
+        or not 0 <= page.visited <= request.parameters[4]
+        or type(page.pass_exhausted) is not bool
+        or len(page.items) > page.visited
+    ):
         _reject_validation()
     incoming = request.parameters[3]
     cursor = page.next_cursor
@@ -760,10 +999,14 @@ def _validate_recovery_page_raw(request, page, /):
         if item.resolution is not None:
             _reject_validation()
         O._validate_work_observation_raw(item)
-        if (item.kind != request.parameters[1] or item.namespace != request.parameters[0]
-                or item.state not in ("queued", "expired", "failed", "cancelled", "held")
-                or cursor is None or item.work_id.int > cursor.int
-                or (prior is not None and item.work_id.int <= prior.int)):
+        if (
+            item.kind != request.parameters[1]
+            or item.namespace != request.parameters[0]
+            or item.state not in ("queued", "expired", "failed", "cancelled", "held")
+            or cursor is None
+            or item.work_id.int > cursor.int
+            or (prior is not None and item.work_id.int <= prior.int)
+        ):
             _reject_validation()
         prior = item.work_id
 
@@ -777,18 +1020,27 @@ def _decode_native_recovery_result_raw(request, rows, /):
         _reject_validation()
     columns = request.statement.result.columns
     header = _decode_columns_raw(columns, rows[0])
-    if (header[0] != "header" or header[1] is None or header[3] is None
-            or any(value is not None for value in header[4:])):
+    if (
+        header[0] != "header"
+        or header[1] is None
+        or header[3] is None
+        or any(value is not None for value in header[4:])
+    ):
         _reject_validation()
     items = [None] * (len(rows) - 1)
     for index in range(1, len(rows)):
         row = _decode_columns_raw(columns, rows[index])
-        if (row[0] != "item" or any(value is not None for value in row[1:4])
-                or row[43] is not False or any(value is not None for value in row[44:])):
+        if (
+            row[0] != "item"
+            or any(value is not None for value in row[1:4])
+            or row[43] is not False
+            or any(value is not None for value in row[44:])
+        ):
             _reject_validation()
         items[index - 1] = _decode_work_observation_raw(row[4:])
-    page = O._scan_page_raw(items=tuple(items), visited=header[1],
-                           next_cursor=header[2], pass_exhausted=header[3])
+    page = O._scan_page_raw(
+        items=tuple(items), visited=header[1], next_cursor=header[2], pass_exhausted=header[3]
+    )
     items = None
     _validate_recovery_page_raw(request, page)
     return page

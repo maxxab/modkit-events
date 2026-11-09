@@ -1,4 +1,5 @@
 """Structural E33 issuer qualification only; no actual psycopg/PostgreSQL."""
+
 import textwrap
 
 import pytest
@@ -56,10 +57,16 @@ def test_readiness_publishes_exact_statuses_without_finalization(profile):
     """)
 
 
-@pytest.mark.parametrize("field,value", [
-    (2, "(1).to_bytes(4,'big')"), (3, "b'y'*32"),
-    (4, "b'wrong'"), (5, "b'wrong'"), (6, "b'wrong'"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        (2, "(1).to_bytes(4,'big')"),
+        (3, "b'y'*32"),
+        (4, "b'wrong'"),
+        (5, "b'wrong'"),
+        (6, "b'wrong'"),
+    ],
+)
 def test_readiness_schema_mismatch_is_detached_and_held(field, value):
     run(f"""
     L,x,actual,c,r,a,t,b,exp=readiness_setup()
@@ -79,11 +86,27 @@ def test_readiness_schema_mismatch_is_detached_and_held(field, value):
     """)
 
 
-@pytest.mark.parametrize("fault", [
-    "missing", "extra", "wrong_oid", "wrong_name", "text_format", "width",
-    "wrong_status", "wrong_count", "nonbinary", "order", "duplicate", "extra_set",
-    "cap", "bad_digest", "null", "version_zero",
-])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing",
+        "extra",
+        "wrong_oid",
+        "wrong_name",
+        "text_format",
+        "width",
+        "wrong_status",
+        "wrong_count",
+        "nonbinary",
+        "order",
+        "duplicate",
+        "extra_set",
+        "cap",
+        "bad_digest",
+        "null",
+        "version_zero",
+    ],
+)
 def test_readiness_invalid_observation_never_published(fault):
     run(f"""
     L,x,actual,c,r,a,t,b,exp=readiness_setup()

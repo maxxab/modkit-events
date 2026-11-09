@@ -1,4 +1,5 @@
 """Actual candidate resource identity, NOT wheel/build qualification."""
+
 import hashlib
 import json
 import subprocess
@@ -13,7 +14,7 @@ def test_actual_manifest_independent_mkmf_oracle():
     document = json.loads((sql / "manifest.json").read_bytes())
     assert set(document) == {"format_version", "package", "migrations"}
     assert document["package"] == "modkit-events"
-    entry, = document["migrations"]
+    (entry,) = document["migrations"]
     expected_paths = ["events/0001_initial.sql", "events/grants_runtime.sql"]
     assert [r["path"] for r in entry["resources"]] == expected_paths
     frame = b"MKMF\x01" + (2).to_bytes(4, "big")
@@ -24,10 +25,13 @@ def test_actual_manifest_independent_mkmf_oracle():
         frame += len(path).to_bytes(4, "big") + path + actual
     assert hashlib.sha256(frame).hexdigest() == entry["migration_digest"]
     assert entry["depends_on"] == []
-    migration, = m.manifest()
+    (migration,) = m.manifest()
     assert migration.migration_digest == entry["migration_digest"]
     for resource in migration.resources:
-        assert m.read_sql(migration, resource).encode() == (sql / resource.path.split("/")[1]).read_bytes()
+        assert (
+            m.read_sql(migration, resource).encode()
+            == (sql / resource.path.split("/")[1]).read_bytes()
+        )
 
 
 def test_import_origin_is_candidate_not_mirror_or_recovery(tmp_path):
@@ -63,9 +67,21 @@ assert not any(name.startswith(('psycopg', 'sqlalchemy', 'modkit_workers')) for 
 print('IMPORT_AUDIT', json.dumps(origins, sort_keys=True))
 """
     result = subprocess.run(
-        [sys.executable, "-I", "-S", "-B", "-X",
-         "pycache_prefix=" + str(tmp_path / "unused-bytecode"), "-c", script, str(expected)],
-        capture_output=True, text=True, timeout=20, check=False,
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-X",
+            "pycache_prefix=" + str(tmp_path / "unused-bytecode"),
+            "-c",
+            script,
+            str(expected),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "IMPORT_AUDIT" in result.stdout

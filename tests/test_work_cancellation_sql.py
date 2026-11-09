@@ -37,13 +37,16 @@ def test_e12_exact_catalog_abi_and_security():
     )
 
 
-@pytest.mark.parametrize("guard", (
-    "p_work_id IS NULL",
-    "(p_expected_token IS NULL) IS DISTINCT FROM (p_expected_revision IS NULL)",
-    "p_expected_revision<0",
-    "p_reason IS NULL",
-    "'^[a-z][a-z0-9_]{0,255}$'",
-))
+@pytest.mark.parametrize(
+    "guard",
+    (
+        "p_work_id IS NULL",
+        "(p_expected_token IS NULL) IS DISTINCT FROM (p_expected_revision IS NULL)",
+        "p_expected_revision<0",
+        "p_reason IS NULL",
+        "'^[a-z][a-z0-9_]{0,255}$'",
+    ),
+)
 def test_e12_arguments_precede_storage(guard):
     source = function()
     assert source.index("ERRCODE='PZ005'") < source.index(guard)
@@ -100,7 +103,7 @@ def test_e12_running_holds_effect_and_preserves_attempt_identity():
     source = function()
     running = source.index("transition_code := 'cancel_running'")
     held = source.index("transition_code := 'cancel_held'")
-    update = source[source.index("UPDATE modkit_events.attempts", running):held]
+    update = source[source.index("UPDATE modkit_events.attempts", running) : held]
     assert "SET outcome='cancelled_unresolved',evidence=''::pg_catalog.bytea" in update
     assert "updated_attempt IS DISTINCT FROM expected_attempt" in update
     assert "expected_attempt := attempt_row;" in source[running:held]
@@ -113,18 +116,29 @@ def test_e12_running_holds_effect_and_preserves_attempt_identity():
 def test_e12_revision_capacity_history_postimages():
     source = function()
     assert source.index("ownership revision exhausted") < source.index("w.ownership_revision+1")
-    for field in ("state", "cancellation_requested", "token", "lease_until",
-                  "ownership_revision", "updated_at"):
+    for field in (
+        "state",
+        "cancellation_requested",
+        "token",
+        "lease_until",
+        "ownership_revision",
+        "updated_at",
+    ):
         assert f"expected_work.{field} :=" in source
     assert "updated_work IS DISTINCT FROM expected_work" in source
     assert "expected_parent.nonterminal_count := subscription_row.nonterminal_count-1;" in source
     assert "updated_parent IS DISTINCT FROM expected_parent" in source
-    assert "IF transition_code COLLATE pg_catalog.\"C\" = 'cancel_predispatch' AND NOT is_job THEN" in source
+    assert (
+        "IF transition_code COLLATE pg_catalog.\"C\" = 'cancel_predispatch' AND NOT is_job THEN"
+        in source
+    )
     assert source.count("UPDATE modkit_events.subscriptions") == 1
     assert source.count("INSERT INTO modkit_events.work_history") == 1
     assert "history_row.reason,'UTF8'" in source
     assert "history_row.recorded_at IS DISTINCT FROM final_time" in source
-    assert "history_row.ownership_revision IS DISTINCT FROM updated_work.ownership_revision" in source
+    assert (
+        "history_row.ownership_revision IS DISTINCT FROM updated_work.ownership_revision" in source
+    )
     assert "history_row.token IS NOT NULL" in source
     assert "history_row.evidence IS DISTINCT FROM ''::pg_catalog.bytea" in source
     assert "RETURN QUERY SELECT updated_work.state;" in source
@@ -133,5 +147,11 @@ def test_e12_revision_capacity_history_postimages():
 def test_e12_no_new_execution_or_guard_authority():
     source = function().split("AS $body$", 1)[1]
     assert sorted(set(re.findall(r"modkit_events\.(e\d+)\(", source))) == ["e15"]
-    assert not re.search(r"\b(?:DELETE|MERGE|TRUNCATE|EXECUTE|COMMIT|ROLLBACK)\b|SKIP LOCKED|EXCEPTION WHEN|nextval|setval", source)
-    assert not re.search(r"(?:UPDATE|INSERT INTO) modkit_events\.(?:finalization_guards|mutation_operations|inbox|job_payloads|delivery_history)", source)
+    assert not re.search(
+        r"\b(?:DELETE|MERGE|TRUNCATE|EXECUTE|COMMIT|ROLLBACK)\b|SKIP LOCKED|EXCEPTION WHEN|nextval|setval",
+        source,
+    )
+    assert not re.search(
+        r"(?:UPDATE|INSERT INTO) modkit_events\.(?:finalization_guards|mutation_operations|inbox|job_payloads|delivery_history)",
+        source,
+    )

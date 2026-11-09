@@ -675,6 +675,7 @@ def test_w03_received_pz013_preserves_driver_identity_and_held_lifetime():
     print('MANAGED_BODY_COMPLETE')
 """)
 
+
 _W04_HELPERS = r"""
 def set_rows(wire_rows):
     Cursor.result.values=wire_rows;Cursor.result.ntuples=len(wire_rows)
@@ -700,7 +701,12 @@ def inbox_row(op,req):
 @pytest.mark.parametrize("case", ["empty", "match", "pair", "inbox"])
 @workers_companion
 def test_w04_real_consumer_publishes_complete_family_after_close(case):
-    run("CASE="+repr(case)+"\n"+_W04_HELPERS+r"""
+    run(
+        "CASE="
+        + repr(case)
+        + "\n"
+        + _W04_HELPERS
+        + r"""
 L,x,actual,c,r,a,t,b,op,req=setup_workers('W04')
 wire_rows=[] if CASE=='empty' else ([inbox_row(op,req)] if CASE=='inbox' else [full_row(op,i) for i in range(1,3 if CASE=='pair' else 2)])
 set_rows(wire_rows)
@@ -720,13 +726,37 @@ assert Cursor.instances[-1].calls[0][1] is req.parameters and len(req.parameters
 assert len(Cursor.result.copies)==73*len(wire_rows)
 assert not L.uncertainty.present and m._counts['D']==0
 print('MANAGED_BODY_COMPLETE')
-""")
+"""
+    )
 
 
-@pytest.mark.parametrize("fault", ["cap", "third", "last_name", "last_oid", "last_format", "last_size", "extra", "suffix", "utf8", "flag", "missing_half", "inbox_half", "duplicate", "reverse"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "cap",
+        "third",
+        "last_name",
+        "last_oid",
+        "last_format",
+        "last_size",
+        "extra",
+        "suffix",
+        "utf8",
+        "flag",
+        "missing_half",
+        "inbox_half",
+        "duplicate",
+        "reverse",
+    ],
+)
 @workers_companion
 def test_w04_rejects_whole_family_without_publishing_first_candidate(fault):
-    run("FAULT="+repr(fault)+"\n"+_W04_HELPERS+r"""
+    run(
+        "FAULT="
+        + repr(fault)
+        + "\n"
+        + _W04_HELPERS
+        + r"""
 L,x,actual,c,r,a,t,b,op,req=setup_workers('W04')
 wire_rows=[full_row(op,1),full_row(op,2)]
 if FAULT=='third':wire_rows.append(full_row(op,3))
@@ -756,13 +786,19 @@ assert m._results[b._stamp]['capacity']==capacity
 assert_held(t,L,b)
 if FAULT=='third' or FAULT.startswith('last_'):assert Cursor.result.copies==[]
 print('MANAGED_BODY_COMPLETE')
-""")
+"""
+    )
 
 
 @pytest.mark.parametrize("fault", ["PZ012", "PZ002", "PZ005", "cancel", "late_cancel"])
 @workers_companion
 def test_w04_original_error_identity_and_paid_lifetime_survive(fault):
-    run("FAULT="+repr(fault)+"\n"+_W04_HELPERS+r"""
+    run(
+        "FAULT="
+        + repr(fault)
+        + "\n"
+        + _W04_HELPERS
+        + r"""
 L,x,actual,c,r,a,t,b,op,req=setup_workers('W04')
 set_rows([full_row(op,1),full_row(op,2)])
 capacity=m._results[b._stamp]['capacity']
@@ -792,7 +828,8 @@ assert not m._results[b._stamp]['populated']
 assert m._results[b._stamp]['capacity']==capacity and m._counts['D']>=1
 assert_held(t,L,b)
 print('MANAGED_BODY_COMPLETE')
-""")
+"""
+    )
 
 
 _W05_DRIVER = r"""

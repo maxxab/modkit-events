@@ -171,24 +171,32 @@ def _verify_failure_root(actual, original, expected_xid):
         cursor = psycopg.Cursor(actual, row_factory=tuple_row)
         cursor.execute(
             "SELECT pg_catalog.pg_current_xact_id_if_assigned()",
-            prepare=False, binary=True,
+            prepare=False,
+            binary=True,
         )
         result = cursor.pgresult
         if (
-            result is None or result.status != pq.ExecStatus.TUPLES_OK
-            or result.ntuples != 1 or result.nfields != 1
+            result is None
+            or result.status != pq.ExecStatus.TUPLES_OK
+            or result.ntuples != 1
+            or result.nfields != 1
             or result.binary_tuples != 1
             or result.fname(0) != b"pg_current_xact_id_if_assigned"
-            or result.ftype(0) != 5069 or result.fformat(0) != 1
+            or result.ftype(0) != 5069
+            or result.fformat(0) != 1
             or result.fsize(0) != 8
-            or result.command_status != b"SELECT 1" or result.command_tuples != 1
-            or cursor.rowcount != 1 or cursor.statusmessage != "SELECT 1"
+            or result.command_status != b"SELECT 1"
+            or result.command_tuples != 1
+            or cursor.rowcount != 1
+            or cursor.statusmessage != "SELECT 1"
         ):
             _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
         value = result.get_value(0, 0)
         if (
-            type(value) is not bytes or len(value) != 8
-            or int.from_bytes(value, "big") != expected_xid or expected_xid <= 0
+            type(value) is not bytes
+            or len(value) != 8
+            or int.from_bytes(value, "big") != expected_xid
+            or expected_xid <= 0
             or cursor.nextset() is not None
         ):
             _fail(ErrorCode.INVALID_OBSERVATION, unconfirmed=True)
@@ -243,7 +251,8 @@ def rollback(root, /, *, execution_ledger, confirm_failure=False):
                 actual, original = _borrow(root, execution_ledger)
                 try:
                     if not _live(
-                        actual, original,
+                        actual,
+                        original,
                         (pq.TransactionStatus.INTRANS, pq.TransactionStatus.INERROR),
                     ):
                         code = ErrorCode.PROFILE_REJECTED
@@ -257,7 +266,9 @@ def rollback(root, /, *, execution_ledger, confirm_failure=False):
                 except BaseException as error:
                     primary = _capture(error)
                 _managed._complete_rollback(
-                    root, execution_ledger, known=known,
+                    root,
+                    execution_ledger,
+                    known=known,
                     failure_verified=confirm_failure and known,
                 )
                 if not known and code is None:

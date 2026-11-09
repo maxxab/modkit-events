@@ -1,4 +1,5 @@
 """Pure metadata contracts; these tests do not qualify PostgreSQL behavior."""
+
 from dataclasses import FrozenInstanceError
 from modkit_events.persistence import catalog as c
 
@@ -19,14 +20,42 @@ def test_lookup_identity_and_closed_keys():
 def test_admission_parameter_positions_and_scope_nullability():
     s = c.get_statement("E03")
     assert tuple(p.name for p in s.parameters) == (
-        "work_id", "kind", "subscription_id", "namespace", "command_type",
-        "scope_evidence", "idempotency_key", "canonical_version",
-        "schema_version_decimal", "scope_application", "scope_tenant", "scope_owner",
-        "intent_evidence", "semantic_input", "replay_input", "protected_binding",
-        "replay_policy", "max_attempts", "deadline", "original_available_at",
-        "event_id", "event_canonical_version", "envelope_evidence", "event_replay_input",
-        "supported", "broker_reference", "transport_observation")
-    assert [s.parameters[i].nullable for i in (2, 6, 9, 10, 11, 18)] == [True, True, False, True, True, True]
+        "work_id",
+        "kind",
+        "subscription_id",
+        "namespace",
+        "command_type",
+        "scope_evidence",
+        "idempotency_key",
+        "canonical_version",
+        "schema_version_decimal",
+        "scope_application",
+        "scope_tenant",
+        "scope_owner",
+        "intent_evidence",
+        "semantic_input",
+        "replay_input",
+        "protected_binding",
+        "replay_policy",
+        "max_attempts",
+        "deadline",
+        "original_available_at",
+        "event_id",
+        "event_canonical_version",
+        "envelope_evidence",
+        "event_replay_input",
+        "supported",
+        "broker_reference",
+        "transport_observation",
+    )
+    assert [s.parameters[i].nullable for i in (2, 6, 9, 10, 11, 18)] == [
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+    ]
     assert s.parameters[10].wire_type is c.WireType.BYTEA
     assert s.parameters[21].constraint is c.ConstraintId.CANONICAL_VERSION
     assert s.parameters[23].constraint is c.ConstraintId.REPLAY_INPUT
@@ -36,9 +65,17 @@ def test_work_and_inbox_protected_suffix_shapes():
     work = c.get_statement("E15").result.columns
     assert len(work) == 56
     assert [work[i].name for i in (2, 14, 20, 26, 29, 33, 38, 39, 40, 55)] == [
-        "subscription_id", "semantic_input", "original_available_at", "available_at",
-        "dispatch_id", "success_origin", "terminal_resolution_operation_id", "resolution_present",
-        "resolution_record_operation_id", "resolution_record_recorded_at"]
+        "subscription_id",
+        "semantic_input",
+        "original_available_at",
+        "available_at",
+        "dispatch_id",
+        "success_origin",
+        "terminal_resolution_operation_id",
+        "resolution_present",
+        "resolution_record_operation_id",
+        "resolution_record_recorded_at",
+    ]
     assert len({col.name for col in work}) == 56
     assert all(col.nullable for col in work[40:])
     assert not work[39].nullable
@@ -49,12 +86,21 @@ def test_work_and_inbox_protected_suffix_shapes():
 
 
 def test_scan_readiness_and_mutation_metadata():
-    for key, width, cursor in (("E04", 60, c.WireType.UUID), ("E13", 60, c.WireType.UUID),
-                               ("E22", 17, c.WireType.BYTEA), ("E26", 17, c.WireType.BYTEA)):
+    for key, width, cursor in (
+        ("E04", 60, c.WireType.UUID),
+        ("E13", 60, c.WireType.UUID),
+        ("E22", 17, c.WireType.BYTEA),
+        ("E26", 17, c.WireType.BYTEA),
+    ):
         spec = c.get_statement(key)
         assert spec.result.cardinality is c.CardinalityKind.SCAN
         assert len(spec.result.columns) == width
-        assert tuple(col.name for col in spec.result.columns[:4]) == ("record_type", "visited", "next_cursor", "pass_exhausted")
+        assert tuple(col.name for col in spec.result.columns[:4]) == (
+            "record_type",
+            "visited",
+            "next_cursor",
+            "pass_exhausted",
+        )
         assert spec.result.columns[2].wire_type is cursor
         assert all(col.nullable for col in spec.result.columns[4:])
         assert [p.name for p in spec.parameters[-2:]] == ["scan_after", "discovery_budget"]
@@ -74,8 +120,13 @@ def test_metadata_rejects_mutability_and_duplicate_names():
         pass
     else:
         raise AssertionError("descriptor mutable")
-    kwargs = dict(key="E15", contract_id="modkit-pg-ab-2", parameters=s.parameters,
-                  result=s.result, mutation=False)
+    kwargs = dict(
+        key="E15",
+        contract_id="modkit-pg-ab-2",
+        parameters=s.parameters,
+        result=s.result,
+        mutation=False,
+    )
     for bad in ([*s.parameters], s.parameters + s.parameters):
         try:
             c.StatementSpec(**(kwargs | {"parameters": bad}))
@@ -84,7 +135,9 @@ def test_metadata_rejects_mutability_and_duplicate_names():
         else:
             raise AssertionError("mutable/duplicate parameters accepted")
     try:
-        c.ParameterSpec(name="x", wire_type="uuid", nullable=False, constraint=c.ConstraintId.WORK_ID)
+        c.ParameterSpec(
+            name="x", wire_type="uuid", nullable=False, constraint=c.ConstraintId.WORK_ID
+        )
     except (TypeError, ValueError):
         pass
     else:
@@ -100,6 +153,7 @@ def test_receipt_limit_has_distinct_constraint_from_megabyte_evidence():
 
 def test_transition_specs_preserve_uncertainty_and_retry_pointer():
     from modkit_events.persistence import transitions as t
+
     rules = {rule.rule_id: rule for rule in t._WORK_RULES}
     for name in ("failure_retry", "reconcile_safe_retry"):
         assert rules[name].target == "retry_waiting"
@@ -124,7 +178,10 @@ def test_transition_specs_preserve_uncertainty_and_retry_pointer():
 def test_operation_kind_discriminators_are_authoritative_and_immutable():
     assert getattr(c, "MUTATION_OPERATION_KINDS", None) is not None, "operation mapping missing"
     assert {key: value.value for key, value in c.MUTATION_OPERATION_KINDS.items()} == {
-        "E27": "repair_publication", "E31": "reconcile_work", "E32": "hold_uncertain"}
+        "E27": "repair_publication",
+        "E31": "reconcile_work",
+        "E32": "hold_uncertain",
+    }
     try:
         c.MUTATION_OPERATION_KINDS["E31"] = c.OperationKind.HOLD_UNCERTAIN
     except TypeError:
@@ -135,14 +192,33 @@ def test_operation_kind_discriminators_are_authoritative_and_immutable():
 
 def test_record_code_work_domain_exact():
     from modkit_events.persistence import transitions as t
-    expected = frozenset({
-        "intake_runnable", "intake_blocked", "claim", "renew", "dispatch", "defer",
-        "complete", "failure_terminal", "failure_cancelled", "failure_retry",
-        "cancel_predispatch", "cancel_running", "cancel_held",
-        "recover_expired_predispatch", "recover_exhausted_predispatch", "recover_claim",
-        "recover_dispatched", "reconcile_success", "reconcile_rejection",
-        "reconcile_cancelled", "reconcile_safe_retry", "hold_uncertain",
-    })
+
+    expected = frozenset(
+        {
+            "intake_runnable",
+            "intake_blocked",
+            "claim",
+            "renew",
+            "dispatch",
+            "defer",
+            "complete",
+            "failure_terminal",
+            "failure_cancelled",
+            "failure_retry",
+            "cancel_predispatch",
+            "cancel_running",
+            "cancel_held",
+            "recover_expired_predispatch",
+            "recover_exhausted_predispatch",
+            "recover_claim",
+            "recover_dispatched",
+            "reconcile_success",
+            "reconcile_rejection",
+            "reconcile_cancelled",
+            "reconcile_safe_retry",
+            "hold_uncertain",
+        }
+    )
     assert t._WORK_HISTORY_CODES == expected
     assert "arm_guard" not in t._WORK_HISTORY_CODES
     assert "cancel_terminal" not in t._WORK_HISTORY_CODES
@@ -150,12 +226,22 @@ def test_record_code_work_domain_exact():
 
 def test_record_code_publication_domain_exact():
     from modkit_events.persistence import transitions as t
-    expected = frozenset({
-        "enqueue", "claim_publication", "renew_publication", "publication_intent",
-        "publication_confirmed", "publication_rejected", "publication_uncertain",
-        "recover_publication_preintent", "recover_publication_intent",
-        "repair_published", "repair_rejected",
-    })
+
+    expected = frozenset(
+        {
+            "enqueue",
+            "claim_publication",
+            "renew_publication",
+            "publication_intent",
+            "publication_confirmed",
+            "publication_rejected",
+            "publication_uncertain",
+            "recover_publication_preintent",
+            "recover_publication_intent",
+            "repair_published",
+            "repair_rejected",
+        }
+    )
     assert t._PUBLICATION_HISTORY_CODES == expected
     for request_or_state in ("confirmed", "rejected", "uncertain", "pending", "held"):
         assert request_or_state not in t._PUBLICATION_HISTORY_CODES
@@ -163,16 +249,25 @@ def test_record_code_publication_domain_exact():
 
 def test_record_code_attempt_domain_exact():
     from modkit_events.persistence import transitions as t
-    assert t._ATTEMPT_OUTCOME_CODES == frozenset({
-        "dispatched", "succeeded", "failed", "cancelled", "uncertain",
-        "cancelled_unresolved", "safe_retry",
-    })
+
+    assert t._ATTEMPT_OUTCOME_CODES == frozenset(
+        {
+            "dispatched",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "uncertain",
+            "cancelled_unresolved",
+            "safe_retry",
+        }
+    )
     for scheduler_code in ("queued", "claimed", "running", "held", "retry_waiting"):
         assert scheduler_code not in t._ATTEMPT_OUTCOME_CODES
 
 
 def test_record_code_types_immutable_and_private():
     from modkit_events.persistence import transitions as t
+
     assert t.__all__ == ()
     for domain in (t._WORK_HISTORY_CODES, t._PUBLICATION_HISTORY_CODES, t._ATTEMPT_OUTCOME_CODES):
         assert type(domain) is frozenset

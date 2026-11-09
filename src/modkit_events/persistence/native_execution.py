@@ -102,9 +102,22 @@ def prepare(
 
 
 def prepare_resolution(
-    execution, /, *, execution_ledger, capacity, work_id, expected_revision,
-    cycle, attempt, dispatch_id, operation_id, outcome, retry_at=None,
-    result=None, evidence, binding,
+    execution,
+    /,
+    *,
+    execution_ledger,
+    capacity,
+    work_id,
+    expected_revision,
+    cycle,
+    attempt,
+    dispatch_id,
+    operation_id,
+    outcome,
+    retry_at=None,
+    result=None,
+    evidence,
+    binding,
 ):
     """Reserve before building E31's composite graph; never issue or finalize."""
     flag = _managed._context(execution_ledger)
@@ -120,8 +133,19 @@ def prepare_resolution(
             try:
                 request = _freeze_request_raw(
                     get_statement("E31"),
-                    (work_id, expected_revision, cycle, attempt, dispatch_id,
-                     operation_id, outcome, retry_at, result, evidence, binding),
+                    (
+                        work_id,
+                        expected_revision,
+                        cycle,
+                        attempt,
+                        dispatch_id,
+                        operation_id,
+                        outcome,
+                        retry_at,
+                        result,
+                        evidence,
+                        binding,
+                    ),
                     context=_return_context_raw(),
                 )
             except _ValidationReject as error:
@@ -145,8 +169,16 @@ def prepare_resolution(
 
 
 def prepare_recovery(
-    execution, /, *, execution_ledger, capacity, namespace, kind, limit,
-    scan_after, discovery_budget,
+    execution,
+    /,
+    *,
+    execution_ledger,
+    capacity,
+    namespace,
+    kind,
+    limit,
+    scan_after,
+    discovery_budget,
 ):
     """Reserve generic M before creating the complete five-input request."""
     from .recovery_profile import _recovery_preparation_min
@@ -193,10 +225,14 @@ def prepare_recovery(
     return preparation
 
 
-
 def prepare_readiness(
-    execution, required_profile: str, expectation: ReadinessExpectation, /, *,
-    execution_ledger, capacity: int = 4096,
+    execution,
+    required_profile: str,
+    expectation: ReadinessExpectation,
+    /,
+    *,
+    execution_ledger,
+    capacity: int = 4096,
 ):
     """Retain pinned E33 expectations only after reserving their paid A frame."""
     flag = _managed._context(execution_ledger)
@@ -319,8 +355,19 @@ def _materialize(cursor, request, descriptor, operation=None, *, max_page_payloa
     value = None
     page_payload_bytes = 0
     previous_work_id = None
-    completion = operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32")
-    accumulator = [None] * count if operation is not None or completion or readiness or recovery else None
+    completion = operation is None and request.statement.key in (
+        "E05",
+        "E06",
+        "E08",
+        "E09",
+        "E10",
+        "E11",
+        "E31",
+        "E32",
+    )
+    accumulator = (
+        [None] * count if operation is not None or completion or readiness or recovery else None
+    )
     for row_index in range(count):
         cap = result.get_value(row_index, 0)
         if type(cap) is not bytes or cap != b"\x01":
@@ -519,7 +566,16 @@ def execute(ticket, result, /, *, execution_ledger):
                     parameters[6],
                     Int8(max_page_payload_bytes),
                 )
-            elif operation is None and request.statement.key in ("E05", "E06", "E08", "E09", "E10", "E11", "E31", "E32"):
+            elif operation is None and request.statement.key in (
+                "E05",
+                "E06",
+                "E08",
+                "E09",
+                "E10",
+                "E11",
+                "E31",
+                "E32",
+            ):
                 from psycopg.types.numeric import Int8BinaryDumper
 
                 cursor.adapters.register_dumper(int, Int8BinaryDumper)
@@ -531,7 +587,9 @@ def execute(ticket, result, /, *, execution_ledger):
                     # A validated unsigned XID needs at most 20 decimal bytes.
                     # Keep the canonical request unchanged; this tuple is D-owned.
                     parameters = parameters[:2] + (str(parameters[2]),) + parameters[3:]
-                elif request.statement is get_statement("E11") or request.statement is get_statement("E32"):
+                elif request.statement is get_statement(
+                    "E11"
+                ) or request.statement is get_statement("E32"):
                     parameters = parameters[:5] + (str(parameters[5]),) + parameters[6:]
             elif max_page_payload_bytes is not None:
                 from psycopg.types.numeric import Int8BinaryDumper

@@ -16,7 +16,7 @@ def historical_prefix_view(raw: bytes) -> bytes:
     """Validate all three current comments and restore only their historical bytes."""
     if type(raw) is not bytes or not raw.startswith(CURRENT_HEADER):
         raise ValueError("unexpected installation header")
-    return HISTORICAL_HEADER + raw[len(CURRENT_HEADER):]
+    return HISTORICAL_HEADER + raw[len(CURRENT_HEADER) :]
 
 
 def test_header_view_preserves_every_suffix_byte():
@@ -30,10 +30,14 @@ def test_header_view_rejects_noncanonical_input():
     import pytest
 
     for raw in (
-        b"", HISTORICAL_HEADER, CURRENT_HEADER[:-1],
+        b"",
+        HISTORICAL_HEADER,
+        CURRENT_HEADER[:-1],
         CURRENT_HEADER.replace(b"Events", b"events", 1),
         CURRENT_HEADER.replace(b"\n", b"\r\n"),
-        b" " + CURRENT_HEADER, bytearray(CURRENT_HEADER), None,
+        b" " + CURRENT_HEADER,
+        bytearray(CURRENT_HEADER),
+        None,
     ):
         with pytest.raises(ValueError, match="unexpected installation header"):
             historical_prefix_view(raw)

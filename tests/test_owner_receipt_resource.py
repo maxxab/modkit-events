@@ -1,4 +1,5 @@
 """Real finite-lease receipt checks; no database or driver imports."""
+
 import hashlib
 import io
 import os
@@ -70,8 +71,10 @@ def test_invalid_utf8_rejected_after_digest_check(owned, monkeypatch):
 @pytest.mark.parametrize("bad", [None, object(), {}, "events"])
 def test_wrong_descriptor_type_rejected_before_io(monkeypatch, bad):
     available()
+
     def forbidden(*args):
         raise AssertionError("invalid descriptor reached I/O")
+
     monkeypatch.setattr(rio, "open_lease", forbidden)
     with pytest.raises(ValueError):
         m.read_owner_receipt(bad)
@@ -85,8 +88,10 @@ def test_forged_same_shape_and_subclass_rejected(owned):
     object.__setattr__(forged, "version", 2)
     with pytest.raises(ValueError):
         m.read_owner_receipt(forged)
+
     class Derived(m.Migration):
         pass
+
     values = {f: getattr(migration, f) for f in migration.__slots__}
     with pytest.raises(ValueError):
         m.read_owner_receipt(Derived(**values))
@@ -94,10 +99,17 @@ def test_forged_same_shape_and_subclass_rejected(owned):
 
 def test_valid_but_not_member_descriptor_rejected(owned):
     migration = m.manifest()[0]
-    resources = tuple(m.SQLResource(path=x.path, sha256="a"*64) for x in migration.resources)
-    changed = m.Migration(component="events", version=1, resources=resources,
-        migration_digest=m._aggregate(resources), depends_on=(),
-        catalog_contract_id="modkit-pg-ab-2", scope_format_id="MKSC-1", intent_format_id="MKPF-1")
+    resources = tuple(m.SQLResource(path=x.path, sha256="a" * 64) for x in migration.resources)
+    changed = m.Migration(
+        component="events",
+        version=1,
+        resources=resources,
+        migration_digest=m._aggregate(resources),
+        depends_on=(),
+        catalog_contract_id="modkit-pg-ab-2",
+        scope_format_id="MKSC-1",
+        intent_format_id="MKPF-1",
+    )
     with pytest.raises(ValueError):
         m.read_owner_receipt(changed)
 
@@ -111,7 +123,7 @@ def test_mutated_migration_resource_fails_before_receipt(owned):
 
 @pytest.mark.parametrize("limit", [None, 8192, 4096, 100])
 def test_receipt_bound_cannot_be_widened_posix(tmp_path, limit):
-    (tmp_path / "owner_receipt.sql").write_bytes(b"x"*4097)
+    (tmp_path / "owner_receipt.sql").write_bytes(b"x" * 4097)
     with rio.PosixLease(tmp_path) as lease:
         with pytest.raises(ValueError, match="large"):
             lease.read("owner_receipt.sql", limit)
@@ -122,7 +134,7 @@ def test_zip_receipt_identity_and_bound(compression):
     available()
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", compression=compression) as archive:
-        archive.writestr("pkg/owner_receipt.sql", b"x"*4097)
+        archive.writestr("pkg/owner_receipt.sql", b"x" * 4097)
     with rio.ZipLease(stream.getvalue(), "pkg/") as lease:
         with pytest.raises(ValueError, match="large"):
             lease.read("owner_receipt.sql", 100000)
@@ -137,6 +149,7 @@ def test_zip_receipt_identity_and_bound(compression):
 def test_unknown_origin_fails_closed(monkeypatch):
     migration = available()
     from modkit_events.persistence import sql
+
     monkeypatch.setattr(sql, "__loader__", object())
     with pytest.raises(ValueError, match="backend"):
         m.read_owner_receipt(migration)
@@ -145,9 +158,11 @@ def test_unknown_origin_fails_closed(monkeypatch):
 def test_close_uncertainty_never_returns_sql(owned, monkeypatch):
     migration = m.manifest()[0]
     close = os.close
+
     def close_then_fail(fd):
         close(fd)
         raise OSError("uncertain close")
+
     monkeypatch.setattr(os, "close", close_then_fail)
     with pytest.raises(OSError, match="uncertain close"):
         m.read_owner_receipt(migration)
@@ -162,23 +177,40 @@ def test_invalid_explicit_limits():
 
 def test_api_is_inert_until_called(monkeypatch):
     import importlib
+
     available()
+
     def forbidden(*args):
         raise AssertionError("import performs resource I/O")
+
     monkeypatch.setattr(rio, "open_lease", forbidden)
     importlib.reload(m)
 
+
 def test_wrong_component_rejected_before_open(monkeypatch):
     migration = available()
-    resources = tuple(m.SQLResource(path=x.path.replace("events/", "workers/"), sha256=x.sha256)
-                      for x in migration.resources)
-    other = m.Migration(component="workers", version=1, resources=resources,
+    resources = tuple(
+        m.SQLResource(path=x.path.replace("events/", "workers/"), sha256=x.sha256)
+        for x in migration.resources
+    )
+    other = m.Migration(
+        component="workers",
+        version=1,
+        resources=resources,
         migration_digest=m._aggregate(resources),
-        depends_on=(m.MigrationDependency(component="events", version=1,
-                    migration_digest=migration.migration_digest),),
-        catalog_contract_id="modkit-pg-ab-2", scope_format_id="MKSC-1", intent_format_id="MKPF-1")
+        depends_on=(
+            m.MigrationDependency(
+                component="events", version=1, migration_digest=migration.migration_digest
+            ),
+        ),
+        catalog_contract_id="modkit-pg-ab-2",
+        scope_format_id="MKSC-1",
+        intent_format_id="MKPF-1",
+    )
+
     def forbidden(*args):
         raise AssertionError("wrong component reached I/O")
+
     monkeypatch.setattr(rio, "open_lease", forbidden)
     with pytest.raises(ValueError):
         m.read_owner_receipt(other)
@@ -197,7 +229,12 @@ def test_receipt_archive_full_api_and_corruption(monkeypatch):
     raw_receipt = (SQL / "owner_receipt.sql").read_bytes()
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
-        for name in ("manifest.json", "0001_initial.sql", "grants_runtime.sql", "owner_receipt.sql"):
+        for name in (
+            "manifest.json",
+            "0001_initial.sql",
+            "grants_runtime.sql",
+            "owner_receipt.sql",
+        ):
             archive.writestr("pkg/" + name, (SQL / name).read_bytes())
     raw = stream.getvalue()
     monkeypatch.setattr(rio, "open_lease", lambda anchor: rio.ZipLease(raw, "pkg/"))
@@ -213,8 +250,10 @@ def test_receipt_archive_full_api_and_corruption(monkeypatch):
         m.read_owner_receipt(migration)
 
 
-@pytest.mark.parametrize("name", ["../owner_receipt.sql", "/owner_receipt.sql",
-                                  "x/owner_receipt.sql", "OWNER_RECEIPT.sql"])
+@pytest.mark.parametrize(
+    "name",
+    ["../owner_receipt.sql", "/owner_receipt.sql", "x/owner_receipt.sql", "OWNER_RECEIPT.sql"],
+)
 def test_receipt_path_aliases_denied(name):
     available()
     with pytest.raises(ValueError, match="containment"):

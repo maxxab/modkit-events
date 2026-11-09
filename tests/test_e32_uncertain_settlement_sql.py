@@ -3,6 +3,7 @@
 Pure imports must use an accepted pinned snapshot during concurrent development.
 E32_SQL_PATH selects the separately frozen SQL candidate for independent review.
 """
+
 from _installation_artifact_helpers import historical_prefix_view
 
 import hashlib
@@ -15,17 +16,31 @@ import pytest
 from modkit_events.persistence.catalog import get_statement
 
 PARAMETERS = (
-    ("work_id", "uuid"), ("token", "uuid"), ("ownership_revision", "int8"),
-    ("cycle", "int4"), ("expected_attempt", "int4"),
-    ("failed_business_root", "xid8"), ("operation_id", "uuid"),
-    ("reason", "text"), ("evidence", "bytea"), ("binding", "bytea"),
+    ("work_id", "uuid"),
+    ("token", "uuid"),
+    ("ownership_revision", "int8"),
+    ("cycle", "int4"),
+    ("expected_attempt", "int4"),
+    ("failed_business_root", "xid8"),
+    ("operation_id", "uuid"),
+    ("reason", "text"),
+    ("evidence", "bytea"),
+    ("binding", "bytea"),
 )
 COLUMNS = (
-    ("operation_id", "uuid"), ("work_id", "uuid"), ("token", "uuid"),
-    ("expected_revision", "int8"), ("cycle", "int4"), ("attempt", "int4"),
-    ("dispatch_id", "uuid"), ("failed_business_root", "xid8"),
-    ("reason", "text"), ("evidence", "bytea"), ("binding", "bytea"),
-    ("resulting_revision", "int8"), ("recorded_at", "timestamptz"),
+    ("operation_id", "uuid"),
+    ("work_id", "uuid"),
+    ("token", "uuid"),
+    ("expected_revision", "int8"),
+    ("cycle", "int4"),
+    ("attempt", "int4"),
+    ("dispatch_id", "uuid"),
+    ("failed_business_root", "xid8"),
+    ("reason", "text"),
+    ("evidence", "bytea"),
+    ("binding", "bytea"),
+    ("resulting_revision", "int8"),
+    ("recorded_at", "timestamptz"),
 )
 
 
@@ -38,7 +53,7 @@ def body():
     source = sql()
     start = source.find("CREATE FUNCTION modkit_events.e32(")
     assert start >= 0, "E32 body missing"
-    return source[start:source.index("$body$;", start) + len("$body$;")]
+    return source[start : source.index("$body$;", start) + len("$body$;")]
 
 
 def test_frozen_prefix():
@@ -53,7 +68,9 @@ def test_exact_abi_and_private_security():
     assert re.findall(r"(\w+) pg_catalog\.(\w+)", parameters) == [
         ("p_" + name, kind) for name, kind in PARAMETERS
     ]
-    assert re.findall(r"(\w+) pg_catalog\.(\w+)", output.split(")\nLANGUAGE", 1)[0]) == list(COLUMNS)
+    assert re.findall(r"(\w+) pg_catalog\.(\w+)", output.split(")\nLANGUAGE", 1)[0]) == list(
+        COLUMNS
+    )
     spec = get_statement("E32")
     assert [(p.name, p.wire_type.value) for p in spec.parameters] == list(PARAMETERS)
     assert [(c.name, c.wire_type.value) for c in spec.result.columns] == list(COLUMNS)
@@ -64,15 +81,18 @@ def test_exact_abi_and_private_security():
     assert f"REVOKE ALL ON FUNCTION modkit_events.e32({signature}) FROM PUBLIC;" in sql()
 
 
-@pytest.mark.parametrize("fragment", (
-    "p_cycle IS DISTINCT FROM 1",
-    "p_expected_attempt NOT BETWEEN 0 AND 1000",
-    "p_failed_business_root<='0'::pg_catalog.xid8",
-    "p_operation_id IS NULL",
-    "pg_catalog.octet_length(p_evidence)>1048576",
-    "pg_catalog.octet_length(p_binding)>1048576",
-    "'^[a-z][a-z0-9_]{0,255}$'",
-))
+@pytest.mark.parametrize(
+    "fragment",
+    (
+        "p_cycle IS DISTINCT FROM 1",
+        "p_expected_attempt NOT BETWEEN 0 AND 1000",
+        "p_failed_business_root<='0'::pg_catalog.xid8",
+        "p_operation_id IS NULL",
+        "pg_catalog.octet_length(p_evidence)>1048576",
+        "pg_catalog.octet_length(p_binding)>1048576",
+        "'^[a-z][a-z0-9_]{0,255}$'",
+    ),
+)
 def test_input_before_discovery(fragment):
     source = body()
     assert source.index("ERRCODE='PZ005'") < source.index(fragment)
@@ -81,13 +101,16 @@ def test_input_before_discovery(fragment):
 
 def test_locks_and_coherent_preimages_before_operation():
     source = body()
-    offsets = [source.index(fragment) for fragment in (
-        "FOR NO KEY UPDATE OF parent",
-        "FOR NO KEY UPDATE OF stored",
-        "FOR NO KEY UPDATE OF current_attempt",
-        "CROSS JOIN LATERAL modkit_events.e15",
-        "SELECT stored.* INTO operation_row",
-    )]
+    offsets = [
+        source.index(fragment)
+        for fragment in (
+            "FOR NO KEY UPDATE OF parent",
+            "FOR NO KEY UPDATE OF stored",
+            "FOR NO KEY UPDATE OF current_attempt",
+            "CROSS JOIN LATERAL modkit_events.e15",
+            "SELECT stored.* INTO operation_row",
+        )
+    ]
     assert offsets == sorted(offsets)
     assert "fresh_work IS DISTINCT FROM w" in source
     assert "attempt_row IS DISTINCT FROM locked_attempt" in source
@@ -99,24 +122,43 @@ def test_repeat_precedes_live_fence_without_reapplying():
     repeat_return = source.index("RETURN QUERY SELECT operation_row.operation_id")
     fence = source.index("MESSAGE='stale uncertain fence'")
     assert validation < repeat_return < fence
-    repeat = source[source.index("IF operation_found THEN"):fence]
+    repeat = source[source.index("IF operation_found THEN") : fence]
     assert "RETURN;" in repeat
     assert "pg_catalog.clock_timestamp()" not in repeat
     assert "UPDATE modkit_events." not in repeat
 
 
-@pytest.mark.parametrize("field", (
-    "event_id", "event_digest", "requested_outcome", "retry_at",
-    "requested_result", "result_digest", "requested_receipt", "resolution_root_xid",
-))
+@pytest.mark.parametrize(
+    "field",
+    (
+        "event_id",
+        "event_digest",
+        "requested_outcome",
+        "retry_at",
+        "requested_result",
+        "result_digest",
+        "requested_receipt",
+        "resolution_root_xid",
+    ),
+)
 def test_receipt_rejects_other_union_fields(field):
     assert f"operation_row.{field} IS NOT NULL" in body()
 
 
-@pytest.mark.parametrize("field", (
-    "work_id", "token", "expected_revision", "cycle", "attempt",
-    "failed_business_root", "requested_reason", "evidence", "binding",
-))
+@pytest.mark.parametrize(
+    "field",
+    (
+        "work_id",
+        "token",
+        "expected_revision",
+        "cycle",
+        "attempt",
+        "failed_business_root",
+        "requested_reason",
+        "evidence",
+        "binding",
+    ),
+)
 def test_receipt_request_exact_match(field):
     source = body()
     assert re.search(r"operation_row\." + field + r".*IS DISTINCT FROM", source)
@@ -124,15 +166,18 @@ def test_receipt_request_exact_match(field):
 
 def test_fresh_authority_after_arbitration_for_every_winner():
     source = body()
-    offsets = [source.index(fragment) for fragment in (
-        "record_time := pg_catalog.clock_timestamp()",
-        "INSERT INTO modkit_events.mutation_operations",
-        "ON CONFLICT ON CONSTRAINT mutation_operations_pkey DO NOTHING",
-        "authority_time := pg_catalog.clock_timestamp()",
-        "authority_time>=w.deadline",
-        "authority_time>=w.lease_until",
-        "UPDATE modkit_events.attempts",
-    )]
+    offsets = [
+        source.index(fragment)
+        for fragment in (
+            "record_time := pg_catalog.clock_timestamp()",
+            "INSERT INTO modkit_events.mutation_operations",
+            "ON CONFLICT ON CONSTRAINT mutation_operations_pkey DO NOTHING",
+            "authority_time := pg_catalog.clock_timestamp()",
+            "authority_time>=w.deadline",
+            "authority_time>=w.lease_until",
+            "UPDATE modkit_events.attempts",
+        )
+    ]
     assert offsets == sorted(offsets)
     assert "expected_operation.recorded_at := record_time" in source
     assert "expected_work.updated_at := record_time" in source

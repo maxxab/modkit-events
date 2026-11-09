@@ -9,7 +9,12 @@ from test_native_execution import _DRIVER
 
 
 def run(body):
-    _run(_SETUP + _DRIVER + "\nfrom pathlib import Path\nsys.path.insert(0,str(Path(SOURCE).parent / 'tests'))\n" + textwrap.dedent(body))
+    _run(
+        _SETUP
+        + _DRIVER
+        + "\nfrom pathlib import Path\nsys.path.insert(0,str(Path(SOURCE).parent / 'tests'))\n"
+        + textwrap.dedent(body)
+    )
 
 
 def test_e11_materializer_returns_staged_exact_true():

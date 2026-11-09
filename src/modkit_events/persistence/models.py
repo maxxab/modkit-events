@@ -1,4 +1,5 @@
 """Immutable managed persistence inputs, independent of drivers and workers."""
+
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
@@ -9,24 +10,24 @@ from ..models import Event
 
 
 class WorkKind(Enum):
-    JOB = 'job'
-    INBOX = 'inbox'
+    JOB = "job"
+    INBOX = "inbox"
 
 
 class ReplayPolicy(Enum):
-    DISABLED = 'disabled'
-    APPLICATION_SAFE = 'application_safe'
+    DISABLED = "disabled"
+    APPLICATION_SAFE = "application_safe"
 
 
 class MaterialState(Enum):
-    ABSENT = 'absent'
-    PRESENT = 'present'
-    ERASED = 'erased'
+    ABSENT = "absent"
+    PRESENT = "present"
+    ERASED = "erased"
 
 
 class CleanupPolicy(Enum):
-    RETAIN = 'retain'
-    ERASE_AFTER_TERMINAL = 'erase_after_terminal'
+    RETAIN = "retain"
+    ERASE_AFTER_TERMINAL = "erase_after_terminal"
 
 
 def _validate_canonical_evidence(value, *, _reject=None):
@@ -102,8 +103,9 @@ class ProtectedBindingInput:
     @_boundary
     def __post_init__(self):
         from .bindings import _normalize_material
-        for name,value in _normalize_material(self).items():
-            object.__setattr__(self,name,value)
+
+        for name, value in _normalize_material(self).items():
+            object.__setattr__(self, name, value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -114,19 +116,23 @@ class EventInput:
     @_boundary
     def __post_init__(self):
         from .bindings import validate_event_replay, canonical_event
+
         if type(self.event) is not Event or type(self.replay_envelope) is not bytes:
             raise ValueError
-        if canonical_event(validate_event_replay(self.replay_envelope)) != canonical_event(self.event):
+        if canonical_event(validate_event_replay(self.replay_envelope)) != canonical_event(
+            self.event
+        ):
             raise ValueError
 
     @property
     def evidence(self):
         from .bindings import canonical_event
+
         return canonical_event(self.event)
 
     @property
     def event_id_bytes(self):
-        return self.event.event_id.encode('utf-8')
+        return self.event.event_id.encode("utf-8")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -172,8 +178,12 @@ class Fence:
     @_boundary
     def __post_init__(self):
         from .bindings import _integer
-        if type(self.work_id) is not UUID or type(self.token) is not UUID:raise ValueError
-        _integer(self.ownership_revision,1,2**63-1);_integer(self.cycle,1,1);_integer(self.expected_attempt,0,1000)
+
+        if type(self.work_id) is not UUID or type(self.token) is not UUID:
+            raise ValueError
+        _integer(self.ownership_revision, 1, 2**63 - 1)
+        _integer(self.cycle, 1, 1)
+        _integer(self.expected_attempt, 0, 1000)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -184,9 +194,12 @@ class PublicationFence:
 
     @_boundary
     def __post_init__(self):
-        from .bindings import _integer,_identifier
-        _identifier(self.event_id);_integer(self.ownership_revision,1,2**63-1)
-        if type(self.token) is not UUID:raise ValueError
+        from .bindings import _integer, _identifier
+
+        _identifier(self.event_id)
+        _integer(self.ownership_revision, 1, 2**63 - 1)
+        if type(self.token) is not UUID:
+            raise ValueError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -202,9 +215,17 @@ class GuardRef:
     @_boundary
     def __post_init__(self):
         from .bindings import _integer
-        if type(self.guard_id) is not UUID:raise ValueError
-        _integer(self.root_xid,1,2**64-1)
-        Fence(work_id=self.work_id,token=self.token,ownership_revision=self.ownership_revision,cycle=self.cycle,expected_attempt=self.expected_attempt)
+
+        if type(self.guard_id) is not UUID:
+            raise ValueError
+        _integer(self.root_xid, 1, 2**64 - 1)
+        Fence(
+            work_id=self.work_id,
+            token=self.token,
+            ownership_revision=self.ownership_revision,
+            cycle=self.cycle,
+            expected_attempt=self.expected_attempt,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -214,8 +235,10 @@ class Capability:
 
     @_boundary
     def __post_init__(self):
-        from .bindings import _integer,_identifier
-        _identifier(self.command_type);_integer(self.schema_version,1,2147483647)
+        from .bindings import _integer, _identifier
+
+        _identifier(self.command_type)
+        _integer(self.schema_version, 1, 2147483647)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -226,8 +249,10 @@ class WorkCursor:
     @_boundary
     def __post_init__(self):
         from .bindings import _instant
-        if type(self.work_id) is not UUID:raise ValueError
-        object.__setattr__(self,'created_at',_instant(self.created_at))
+
+        if type(self.work_id) is not UUID:
+            raise ValueError
+        object.__setattr__(self, "created_at", _instant(self.created_at))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -237,7 +262,8 @@ class HistoryCursor:
     @_boundary
     def __post_init__(self):
         from .bindings import _integer
-        _integer(self.after_id,0,2**63-1)
+
+        _integer(self.after_id, 0, 2**63 - 1)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -248,7 +274,9 @@ class AttemptCursor:
     @_boundary
     def __post_init__(self):
         from .bindings import _integer
-        _integer(self.after_cycle,0,2147483647);_integer(self.after_attempt,0,2147483647)
+
+        _integer(self.after_cycle, 0, 2147483647)
+        _integer(self.after_attempt, 0, 2147483647)
 
 
 def _retain_field(value, name, normalized, *, _reject=None):
@@ -257,6 +285,7 @@ def _retain_field(value, name, normalized, *, _reject=None):
     elif getattr(value, name) is not normalized:
         _reject_validation()
 
+
 def _validate_scope_evidence_core(self, *, _reject=None):
     from . import scope as S
     from .bindings import _reject_scalar
@@ -264,17 +293,13 @@ def _validate_scope_evidence_core(self, *, _reject=None):
     decode_canonical_scope = (
         S.decode_canonical_scope if _reject is None else S._decode_canonical_scope_raw
     )
-    decode_scope_fields = (
-        S.decode_scope_fields if _reject is None else S._decode_scope_fields_raw
-    )
+    decode_scope_fields = S.decode_scope_fields if _reject is None else S._decode_scope_fields_raw
     if (
         type(self.canonical_version) is not int
         or self.canonical_version != 1
         or type(self.canonical) is not bytes
         or type(self.application) is not bytes
-        or any(
-            x is not None and type(x) is not bytes for x in (self.tenant, self.owner)
-        )
+        or any(x is not None and type(x) is not bytes for x in (self.tenant, self.owner))
     ):
         _reject_scalar(_reject)
     if decode_canonical_scope(self.canonical) != decode_scope_fields(
@@ -351,10 +376,7 @@ def _validate_admission_input_core(self, *, _reject=None, _intent=True):
         from .bindings import (
             _version_to_decimal_raw as version_to_decimal,
         )
-    if (
-        type(self.identity) is not WorkIdentity
-        or type(self.replay_policy) is not ReplayPolicy
-    ):
+    if type(self.identity) is not WorkIdentity or type(self.replay_policy) is not ReplayPolicy:
         _reject_scalar(_reject)
     _validate_work_identity_core(self.identity, _reject=_reject)
     version_to_decimal(self.schema_version)
@@ -374,10 +396,7 @@ def _validate_admission_input_core(self, *, _reject=None, _intent=True):
         expected = canonical_json(decode_mapping_replay(self.replay_input))
     else:
         event = validate_event_replay(self.replay_input)
-        if (
-            event.schema_version != self.schema_version
-            or event.name != self.identity.command_type
-        ):
+        if event.schema_version != self.schema_version or event.name != self.identity.command_type:
             _reject_scalar(_reject)
         expected = canonical_event(event).content
     if expected != self.semantic_input:

@@ -1929,8 +1929,9 @@ class E31ContenderOutcomeControls(unittest.TestCase):
         thread, contender = Mock(), Mock()
         result = {}
         contender.commit.side_effect = lambda: self.assertEqual(result, {})
-        with patch.object(threading, "current_thread", return_value=thread), patch.dict(
-            globals(), {"call_e31": Mock(return_value={"receipt": 1})}
+        with (
+            patch.object(threading, "current_thread", return_value=thread),
+            patch.dict(globals(), {"call_e31": Mock(return_value={"receipt": 1})}),
         ):
             _run_lock_contender(contender, (1,), result, "row", None)
         self.assertEqual(result, {"row": {"receipt": 1}})
@@ -1945,8 +1946,9 @@ class E31ContenderOutcomeControls(unittest.TestCase):
         error = RuntimeError("conflict")
         error.sqlstate = "PZ002"
         contender.rollback.side_effect = lambda: self.assertEqual(result, {})
-        with patch.object(threading, "current_thread", return_value=thread), patch.dict(
-            globals(), {"call_e31": Mock(side_effect=error)}
+        with (
+            patch.object(threading, "current_thread", return_value=thread),
+            patch.dict(globals(), {"call_e31": Mock(side_effect=error)}),
         ):
             _run_lock_contender(contender, (1,), result, "receipt", "PZ002")
         self.assertEqual(result, {"sqlstate": "PZ002"})

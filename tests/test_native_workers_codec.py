@@ -316,6 +316,7 @@ print('MANAGED_BODY_COMPLETE')
 """
     )
 
+
 # Literal W04 ABI: independent of SQL generation and descriptors.
 _EXPECTED_W04 = (
     _EXPECTED_W02[0],
@@ -329,7 +330,10 @@ _EXPECTED_W04 = (
 def test_w04_fixed_sql_and_transport_literal_contract():
     """Breaks on W02 job-only guards, a shifted flag, or uncapped output."""
     _run(
-        "EXPECTED=" + repr(_EXPECTED_W04) + "\n" + r"""
+        "EXPECTED="
+        + repr(_EXPECTED_W04)
+        + "\n"
+        + r"""
 import re
 from modkit_events.persistence import native_codec as N
 assert hasattr(N, '_W04_SQL'), 'fixed W04 SQL missing'
@@ -355,12 +359,16 @@ print('MANAGED_BODY_COMPLETE')
 """
     )
 
+
 @workers_companion
 def test_w04_descriptor_and_binary_preflight_with_real_consumer_request():
     """Real consumer request feeds the fixed descriptor and complete binary preflight."""
     from test_native_workers_profile import _JOB_SETUP
 
-    _run(_JOB_SETUP + _PROFILE + r"""
+    _run(
+        _JOB_SETUP
+        + _PROFILE
+        + r"""
 from modkit_events.persistence import native_codec as N
 from modkit_events.persistence.errors import _ValidationReject
 def reject(fn):
@@ -403,7 +411,8 @@ N.UUID=forbidden
 changed=list(row);changed[-1]=b'x'*1048577
 reject(lambda:N._decode_binary_transport_row(spec,tuple(changed),op,request=request))
 print('MANAGED_BODY_COMPLETE')
-""")
+"""
+    )
 
 
 def test_w05_transport_exists():

@@ -1,18 +1,180 @@
 """Connection-free contract checks, not SQL execution or ACL qualification."""
+
 import hashlib
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SQL = ROOT / "src/modkit_events/persistence/sql"
-EXPECTED = {'modkit_events._utf8_valid(pg_catalog.bytea,pg_catalog.int4,pg_catalog.bool)': [], 'modkit_events._bounded_uint(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)': [], 'modkit_events._scope_valid(pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)': [], 'modkit_events._record_fields(pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4)': [], 'modkit_events._decimal_valid(pg_catalog.bytea,pg_catalog.bool)': [], 'modkit_events._float_hex_valid(pg_catalog.bytea)': [], 'modkit_events._j_nodes(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4)': [], 'modkit_events._integer_power(pg_catalog.int4,pg_catalog.int4)': [], 'modkit_events._hex_fraction(pg_catalog.numeric)': [], 'modkit_events._decimal_float_hex(pg_catalog.bytea)': [], 'modkit_events._hex4(pg_catalog.bytea,pg_catalog.int4)': [], 'modkit_events._utf8_scalar(pg_catalog.int4)': [], 'modkit_events._json_string_chunks(pg_catalog.bytea,pg_catalog.int4)': [], 'modkit_events._json_string(pg_catalog.bytea,pg_catalog.int4)': [], 'modkit_events._skip_json_ws(pg_catalog.bytea,pg_catalog.int4)': [], 'modkit_events._json_children(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)': [], 'modkit_events._json_value(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)': [], 'modkit_events._json_to_j(pg_catalog.bytea)': [], 'modkit_events._make_record(pg_catalog.bytea,pg_catalog.bytea[])': [], 'modkit_events._j_scalar_bytes(pg_catalog.bytea,pg_catalog.int4)': [], 'modkit_events._event_replay_frame(pg_catalog.bytea)': [], 'modkit_events._optional_bytes(pg_catalog.bytea)': [], 'modkit_events._instant_bytes(pg_catalog.timestamptz)': [], 'modkit_events._protected_valid(pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea)': [], 'modkit_events._intent_valid(pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.timestamptz,pg_catalog.timestamptz)': [], 'modkit_events._guard_immutable()': [], 'modkit_events._guard_deferred_check()': [], 'modkit_events._reject_record_mutation()': [], 'modkit_events._attempt_record_check()': [], 'modkit_events.e14()': ['modkit_runtime', 'modkit_reconciler'], 'modkit_events.e09(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e08(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4)': ['modkit_runtime'], 'modkit_events._protected_frame_valid(pg_catalog.bytea)': [], 'modkit_events._job_payload_record_check()': [], 'modkit_events._inbox_record_check()': [], 'modkit_events._work_admission_immutable()': [], 'modkit_events.e10(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.xid8,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.bytea)': ['modkit_runtime'], 'modkit_events.e15(pg_catalog.uuid)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e18(pg_catalog.bytea)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e17(pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e16(pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e34(pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e01(pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4)': ['modkit_runtime'], 'modkit_events.e03(pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bool,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime'], 'modkit_events.e28(pg_catalog.bytea)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e02(pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime'], 'modkit_events.e04(pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea[],pg_catalog.int4[],pg_catalog.int4,pg_catalog.float8,pg_catalog.uuid,pg_catalog.int4)': ['modkit_runtime'], 'modkit_events.e05(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.float8)': ['modkit_runtime'], 'modkit_events.e06(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.uuid,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime'], 'modkit_events.e07(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.timestamptz)': ['modkit_runtime'], 'modkit_events.e30(pg_catalog.bytea,pg_catalog.timestamptz,pg_catalog.uuid,pg_catalog.int4)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e19(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e20(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e21(pg_catalog.uuid,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e29(pg_catalog.bytea,pg_catalog.int8,pg_catalog.int4)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e22(pg_catalog.int4,pg_catalog.float8,pg_catalog.bytea,pg_catalog.int4)': ['modkit_runtime'], 'modkit_events.e23(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.float8)': ['modkit_runtime'], 'modkit_events.e24(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.uuid)': ['modkit_runtime'], 'modkit_events.e25(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime'], 'modkit_events.e26(pg_catalog.int4,pg_catalog.bytea,pg_catalog.int4)': ['modkit_reconciler'], 'modkit_events.e27(pg_catalog.bytea,pg_catalog.int8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_reconciler'], 'modkit_events.e12(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.text)': ['modkit_reconciler'], 'modkit_events.e13(pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.uuid,pg_catalog.int4)': ['modkit_reconciler'], 'modkit_events.e04(pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea[],pg_catalog.int4[],pg_catalog.int4,pg_catalog.float8,pg_catalog.uuid,pg_catalog.int4,pg_catalog.int8)': [], 'modkit_events.e11(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.xid8,pg_catalog.text,pg_catalog.timestamptz,pg_catalog.text,pg_catalog.bytea)': ['modkit_runtime'], 'modkit_events.e32(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.xid8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_runtime'], 'modkit_events.e33(pg_catalog.text)': ['modkit_runtime', 'modkit_reconciler', 'modkit_operator'], 'modkit_events.e31(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)': ['modkit_reconciler']}
+EXPECTED = {
+    "modkit_events._utf8_valid(pg_catalog.bytea,pg_catalog.int4,pg_catalog.bool)": [],
+    "modkit_events._bounded_uint(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)": [],
+    "modkit_events._scope_valid(pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)": [],
+    "modkit_events._record_fields(pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4)": [],
+    "modkit_events._decimal_valid(pg_catalog.bytea,pg_catalog.bool)": [],
+    "modkit_events._float_hex_valid(pg_catalog.bytea)": [],
+    "modkit_events._j_nodes(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4)": [],
+    "modkit_events._integer_power(pg_catalog.int4,pg_catalog.int4)": [],
+    "modkit_events._hex_fraction(pg_catalog.numeric)": [],
+    "modkit_events._decimal_float_hex(pg_catalog.bytea)": [],
+    "modkit_events._hex4(pg_catalog.bytea,pg_catalog.int4)": [],
+    "modkit_events._utf8_scalar(pg_catalog.int4)": [],
+    "modkit_events._json_string_chunks(pg_catalog.bytea,pg_catalog.int4)": [],
+    "modkit_events._json_string(pg_catalog.bytea,pg_catalog.int4)": [],
+    "modkit_events._skip_json_ws(pg_catalog.bytea,pg_catalog.int4)": [],
+    "modkit_events._json_children(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)": [],
+    "modkit_events._json_value(pg_catalog.bytea,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)": [],
+    "modkit_events._json_to_j(pg_catalog.bytea)": [],
+    "modkit_events._make_record(pg_catalog.bytea,pg_catalog.bytea[])": [],
+    "modkit_events._j_scalar_bytes(pg_catalog.bytea,pg_catalog.int4)": [],
+    "modkit_events._event_replay_frame(pg_catalog.bytea)": [],
+    "modkit_events._optional_bytes(pg_catalog.bytea)": [],
+    "modkit_events._instant_bytes(pg_catalog.timestamptz)": [],
+    "modkit_events._protected_valid(pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea)": [],
+    "modkit_events._intent_valid(pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.timestamptz,pg_catalog.timestamptz)": [],
+    "modkit_events._guard_immutable()": [],
+    "modkit_events._guard_deferred_check()": [],
+    "modkit_events._reject_record_mutation()": [],
+    "modkit_events._attempt_record_check()": [],
+    "modkit_events.e14()": ["modkit_runtime", "modkit_reconciler"],
+    "modkit_events.e09(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e08(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4)": [
+        "modkit_runtime"
+    ],
+    "modkit_events._protected_frame_valid(pg_catalog.bytea)": [],
+    "modkit_events._job_payload_record_check()": [],
+    "modkit_events._inbox_record_check()": [],
+    "modkit_events._work_admission_immutable()": [],
+    "modkit_events.e10(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.xid8,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.bytea)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e15(pg_catalog.uuid)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e18(pg_catalog.bytea)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e17(pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e16(pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e34(pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e01(pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e03(pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.timestamptz,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bool,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e28(pg_catalog.bytea)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e02(pg_catalog.bytea,pg_catalog.int4,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e04(pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea[],pg_catalog.int4[],pg_catalog.int4,pg_catalog.float8,pg_catalog.uuid,pg_catalog.int4)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e05(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.float8)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e06(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.uuid,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e07(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.timestamptz)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e30(pg_catalog.bytea,pg_catalog.timestamptz,pg_catalog.uuid,pg_catalog.int4)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e19(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e20(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e21(pg_catalog.uuid,pg_catalog.int4,pg_catalog.int4,pg_catalog.int4)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e29(pg_catalog.bytea,pg_catalog.int8,pg_catalog.int4)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e22(pg_catalog.int4,pg_catalog.float8,pg_catalog.bytea,pg_catalog.int4)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e23(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.float8)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e24(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.uuid)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e25(pg_catalog.bytea,pg_catalog.uuid,pg_catalog.int8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e26(pg_catalog.int4,pg_catalog.bytea,pg_catalog.int4)": ["modkit_reconciler"],
+    "modkit_events.e27(pg_catalog.bytea,pg_catalog.int8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_reconciler"
+    ],
+    "modkit_events.e12(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.text)": [
+        "modkit_reconciler"
+    ],
+    "modkit_events.e13(pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.uuid,pg_catalog.int4)": [
+        "modkit_reconciler"
+    ],
+    "modkit_events.e04(pg_catalog.bytea,pg_catalog.text,pg_catalog.bytea[],pg_catalog.int4[],pg_catalog.int4,pg_catalog.float8,pg_catalog.uuid,pg_catalog.int4,pg_catalog.int8)": [],
+    "modkit_events.e11(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.xid8,pg_catalog.text,pg_catalog.timestamptz,pg_catalog.text,pg_catalog.bytea)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e32(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.xid8,pg_catalog.uuid,pg_catalog.text,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_runtime"
+    ],
+    "modkit_events.e33(pg_catalog.text)": [
+        "modkit_runtime",
+        "modkit_reconciler",
+        "modkit_operator",
+    ],
+    "modkit_events.e31(pg_catalog.uuid,pg_catalog.int8,pg_catalog.int4,pg_catalog.int4,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.timestamptz,pg_catalog.bytea,pg_catalog.bytea,pg_catalog.bytea)": [
+        "modkit_reconciler"
+    ],
+}
 BASE_SUFFIX_SHA = "8b5dd65194ecce01af5379b0acfbdc8934f1ff558b8e1af0a15e313a7f4f639c"
 
 
 def test_initial_preserves_exact_functional_suffix():
     raw = (SQL / "0001_initial.sql").read_bytes()
     assert raw.splitlines()[0] == b"-- Events initial schema for explicit owner installation."
-    assert hashlib.sha256(b"".join(raw.splitlines(keepends=True)[3:])).hexdigest() == BASE_SUFFIX_SHA
+    assert (
+        hashlib.sha256(b"".join(raw.splitlines(keepends=True)[3:])).hexdigest() == BASE_SUFFIX_SHA
+    )
 
 
 def test_grants_are_exact_selected_signature_role_pairs():
@@ -29,27 +191,60 @@ def test_grants_are_exact_selected_signature_role_pairs():
 def test_grants_no_unbounded_or_mutating_control_surface():
     text = (SQL / "grants_runtime.sql").read_text()
     executable = re.sub(r"--[^\n]*", "", text)
-    for forbidden in (r"GRANT\s+ALL", r"ALL FUNCTIONS", r"ALTER DEFAULT", r"CREATE ROLE",
-                      r"ALTER ROLE", r"SET ROLE", r"COMMIT\s*;", r"ROLLBACK\s*;",
-                      r"GRANT .* ON (?:TABLE|SEQUENCE|TYPE)", r"REVOKE "):
+    for forbidden in (
+        r"GRANT\s+ALL",
+        r"ALL FUNCTIONS",
+        r"ALTER DEFAULT",
+        r"CREATE ROLE",
+        r"ALTER ROLE",
+        r"SET ROLE",
+        r"COMMIT\s*;",
+        r"ROLLBACK\s*;",
+        r"GRANT .* ON (?:TABLE|SEQUENCE|TYPE)",
+        r"REVOKE ",
+    ):
         assert not re.search(forbidden, executable, re.I), forbidden
 
 
 def test_grants_have_closed_catalog_and_effective_privilege_oracles():
     text = (SQL / "grants_runtime.sql").read_text()
-    for token in ("pg_default_acl", "defaclnamespace", "pg_auth_members", "rolinherit",
-                  "set_option", "attacl", "has_column_privilege", "has_table_privilege",
-                  "has_sequence_privilege", "has_function_privilege", "has_schema_privilege",
-                  "has_type_privilege", "typacl", "typelem", "typarray", "prosrc",
-                  "proallargtypes", "proargnames", "proargmodes", "proconfig", "prosecdef",
-                  "is_grantable", "EXCEPT", "PZ011", "preflight", "postflight"):
+    for token in (
+        "pg_default_acl",
+        "defaclnamespace",
+        "pg_auth_members",
+        "rolinherit",
+        "set_option",
+        "attacl",
+        "has_column_privilege",
+        "has_table_privilege",
+        "has_sequence_privilege",
+        "has_function_privilege",
+        "has_schema_privilege",
+        "has_type_privilege",
+        "typacl",
+        "typelem",
+        "typarray",
+        "prosrc",
+        "proallargtypes",
+        "proargnames",
+        "proargmodes",
+        "proconfig",
+        "prosecdef",
+        "is_grantable",
+        "EXCEPT",
+        "PZ011",
+        "preflight",
+        "postflight",
+    ):
         assert token in text, token
     # Literal inventory includes every private function, rather than just public grants.
     for signature in EXPECTED:
         assert "'" + signature + "'" in text
 
+
 def test_json_inventory_matches_all_frozen_initial_bodies_and_abis():
     import json
+
     grants = (SQL / "grants_runtime.sql").read_text()
     inventories = re.findall(r"\$functions\$(.*?)\$functions\$", grants, re.S)
     assert len(inventories) == 2 and inventories[0] == inventories[1]
@@ -61,9 +256,12 @@ def test_json_inventory_matches_all_frozen_initial_bodies_and_abis():
         assert item["roles"] == EXPECTED[signature]
         name = signature.split("(")[0]
         candidates = re.findall(
-            r"CREATE FUNCTION " + re.escape(name) +
-            r"\((.*?)\)\s*RETURNS (.*?)\s+LANGUAGE plpgsql(.*?)AS \$body\$(.*?)\$body\$;",
-            initial, re.S)
+            r"CREATE FUNCTION "
+            + re.escape(name)
+            + r"\((.*?)\)\s*RETURNS (.*?)\s+LANGUAGE plpgsql(.*?)AS \$body\$(.*?)\$body\$;",
+            initial,
+            re.S,
+        )
         selected = []
         for parameters, returns, options, body in candidates:
             params = re.findall(r"(\w+)\s+((?:pg_catalog|modkit_events)\.\w+(?:\[\])?)", parameters)
@@ -87,6 +285,7 @@ def test_function_and_schema_acl_checks_are_bidirectional_and_typed():
     assert "a.typacl IS NULL" in text and "ELSIF typ.typacl IS NOT NULL" in text
     assert "has_type_privilege(role_oid,typ.typarray,'USAGE')" in text
     assert "has_column_privilege(role_oid,object_oid,a.attnum" in text
+
 
 def test_closed_indexes_and_trigger_call_targets():
     text = (SQL / "grants_runtime.sql").read_text()
@@ -123,8 +322,7 @@ def _function_acl_plan_baselines():
     for match in plans:
         predicate = " ".join(match["filter"].split())
         assert predicate in ("", "WHERE grantee=owner_oid"), predicate
-        yield {row for row in default_acl
-               if not predicate or row[1] == 10}, default_acl
+        yield {row for row in default_acl if not predicate or row[1] == 10}, default_acl
 
 
 def test_sr1_revoked_initial_and_exact_postgrant_acl_sets():
@@ -133,7 +331,9 @@ def test_sr1_revoked_initial_and_exact_postgrant_acl_sets():
         assert default_acl != owner_only, "PUBLIC default must not be erased from actual"
         for permitted in ((), (11,), (12,), (11, 12), (11, 12, 13)):
             for postflight in (False, True):
-                grants = {(10, role, "EXECUTE", False) for role in permitted} if postflight else set()
+                grants = (
+                    {(10, role, "EXECUTE", False) for role in permitted} if postflight else set()
+                )
                 expected = baseline | grants
                 legitimate_actual = owner_only | grants
                 # Both EXCEPT directions must be empty for legitimate exact state.
@@ -161,7 +361,10 @@ def test_sr1_public_default_and_mutated_acl_sets_rejected():
                 invalid_states.append(owner_only)  # missing required direct grant
             for actual in invalid_states:
                 assert (actual - expected) or (expected - actual), (
-                    "contaminated ACL unexpectedly equals wanted", actual, postflight)
+                    "contaminated ACL unexpectedly equals wanted",
+                    actual,
+                    postflight,
+                )
 
 
 def test_job_payload_inventory_has_only_actual_declared_columns():
@@ -197,8 +400,9 @@ def test_job_payload_inventory_has_only_actual_declared_columns():
         assert constraints in ([], ["NOT", "NULL"])
         actual.append((name, wire, constraints == ["NOT", "NULL"]))
     assert actual == expected
-    inventories = re.findall(r"\$relations\$(.*?)\$relations\$",
-                             (SQL / "grants_runtime.sql").read_text(), re.S)
+    inventories = re.findall(
+        r"\$relations\$(.*?)\$relations\$", (SQL / "grants_runtime.sql").read_text(), re.S
+    )
     assert len(inventories) == 2 and inventories[0] == inventories[1]
     for raw in inventories:
         relations = json.loads(raw)
@@ -206,8 +410,9 @@ def test_job_payload_inventory_has_only_actual_declared_columns():
             names = [column["name"] for column in relation["columns"]]
             assert len(names) == len(set(names)), relation["name"]
         payload = next(row for row in relations if row["name"] == "job_payloads")
-        assert [(col["name"], col["type"], col["notnull"])
-                for col in payload["columns"]] == expected
+        assert [
+            (col["name"], col["type"], col["notnull"]) for col in payload["columns"]
+        ] == expected
 
 
 def test_mutation_retry_at_check_does_not_imply_not_null_column():
@@ -216,14 +421,17 @@ def test_mutation_retry_at_check_does_not_imply_not_null_column():
     initial = (SQL / "0001_initial.sql").read_text()
     table = initial.split("CREATE TABLE modkit_events.mutation_operations (", 1)[1]
     declaration = table.split("\n", 1)[1]
-    retry = next(line.strip() for line in declaration.splitlines()
-                 if line.strip().startswith("retry_at pg_catalog.timestamptz"))
+    retry = next(
+        line.strip()
+        for line in declaration.splitlines()
+        if line.strip().startswith("retry_at pg_catalog.timestamptz")
+    )
     assert retry.startswith("retry_at pg_catalog.timestamptz CHECK (")
     assert "retry_at IS NULL OR" in retry and "IS NOT NULL" in retry
-    for raw in re.findall(r"\$relations\$(.*?)\$relations\$",
-                          (SQL / "grants_runtime.sql").read_text(), re.S):
-        relation = next(row for row in json.loads(raw)
-                        if row["name"] == "mutation_operations")
+    for raw in re.findall(
+        r"\$relations\$(.*?)\$relations\$", (SQL / "grants_runtime.sql").read_text(), re.S
+    ):
+        relation = next(row for row in json.loads(raw) if row["name"] == "mutation_operations")
         column = next(row for row in relation["columns"] if row["name"] == "retry_at")
         assert column == {"name": "retry_at", "type": "pg_catalog.timestamptz", "notnull": False}
 
@@ -249,8 +457,12 @@ def test_type_topology_if_keeps_case_then_inside_sql_parentheses():
                 depth -= 1
                 assert depth >= 0
             elif value == "THEN" and depth == 0:
-                assert condition[match.end():].lstrip().startswith(
-                    "RAISE EXCEPTION USING ERRCODE='PZ011',MESSAGE='Events type topology mismatch'"
+                assert (
+                    condition[match.end() :]
+                    .lstrip()
+                    .startswith(
+                        "RAISE EXCEPTION USING ERRCODE='PZ011',MESSAGE='Events type topology mismatch'"
+                    )
                 ), "SQL CASE prematurely terminates the PL/pgSQL IF expression"
                 break
         else:

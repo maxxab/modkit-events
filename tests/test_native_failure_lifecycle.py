@@ -1,4 +1,5 @@
 """Pure lifecycle/probe fault injection; no database qualification."""
+
 import textwrap
 
 import pytest
@@ -37,8 +38,10 @@ def arm(r,x,L,xid=17):
     return f
 """
 
+
 def run(body):
     _run(_FIXTURE + _SETUP + _PROVENANCE + textwrap.dedent(body))
+
 
 def test_native_witness_is_fixed_and_ordinary_rollback_is_not_proof():
     run("""
@@ -57,6 +60,7 @@ def test_native_witness_is_fixed_and_ordinary_rollback_is_not_proof():
     print('MANAGED_BODY_COMPLETE')
     """)
 
+
 def test_missing_witness_strict_preflight_leaves_root_unchanged():
     run("""
     L,x,actual,c=setup_physical();r=active_root(c,L)
@@ -68,6 +72,7 @@ def test_missing_witness_strict_preflight_leaves_root_unchanged():
     assert m.capacity_snapshot(execution_ledger=L)==before
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 def test_wrapper_rejects_nonbool_without_importing_driver_or_charging():
     run("""
@@ -82,6 +87,7 @@ def test_wrapper_rejects_nonbool_without_importing_driver_or_charging():
     assert m.capacity_snapshot(execution_ledger=L)==before
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 _FAKE = """
 from types import ModuleType, SimpleNamespace
@@ -161,8 +167,11 @@ def rolled_back():
     m.acknowledge_root_end(receipt,execution_ledger=L)
     return L,x,actual,c,r,f,receipt
 """
+
+
 def native_run(body):
-    _run(_SETUP+_FAKE+_PROVENANCE+_BIND+textwrap.dedent(body))
+    _run(_SETUP + _FAKE + _PROVENANCE + _BIND + textwrap.dedent(body))
+
 
 def test_strict_probe_precedes_actual_rollback_and_preserves_paid_root():
     native_run("""
@@ -174,23 +183,37 @@ def test_strict_probe_precedes_actual_rollback_and_preserves_paid_root():
     print('MANAGED_BODY_COMPLETE')
     """)
 
-@pytest.mark.parametrize('change',[
-    "probe_value=(18).to_bytes(8,'big')", "probe_value=None",
-    "probe_value=b'123'", "Result.ftype=lambda s,i:20",
-    "Result.ntuples=2", "Result.fname=lambda s,i:b'other'",
-    "Result.fformat=lambda s,i:0", "Result.fsize=lambda s,i:4",
-    "Result.command_tuples=2", "Result.command_status=b'SELECT 2'",
-    "extra=True", "probe_value=bytes(8)",
-])
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "probe_value=(18).to_bytes(8,'big')",
+        "probe_value=None",
+        "probe_value=b'123'",
+        "Result.ftype=lambda s,i:20",
+        "Result.ntuples=2",
+        "Result.fname=lambda s,i:b'other'",
+        "Result.fformat=lambda s,i:0",
+        "Result.fsize=lambda s,i:4",
+        "Result.command_tuples=2",
+        "Result.command_status=b'SELECT 2'",
+        "extra=True",
+        "probe_value=bytes(8)",
+    ],
+)
 def test_bad_probe_never_rolls_back_or_mints_proof(change):
-    native_run(change+"""
+    native_run(
+        change
+        + """
 L,x,actual,c=setup_physical();r=active_root(c,L);arm(r,x,L)
 expect(E.INVALID_OBSERVATION,lambda:n.rollback(r,execution_ledger=L,confirm_failure=True),True)
 record=m._root(r,L)[1]
 assert record['state']=='UNKNOWN' and not record['failure_verified']
 assert Connection.calls==0 and L.uncertainty.present and m._counts['D']>=1
 print('MANAGED_BODY_COMPLETE')
-""")
+"""
+    )
+
 
 def test_known_inerror_preflight_does_not_query_reserve_or_consume():
     native_run("""
@@ -204,6 +227,7 @@ def test_known_inerror_preflight_does_not_query_reserve_or_consume():
     print('MANAGED_BODY_COMPLETE')
     """)
 
+
 def test_false_post_idle_refunds_only_transient_d_not_unknown_root():
     native_run("""
     L,x,actual,c=setup_physical();r=active_root(c,L);arm(r,x,L)
@@ -214,6 +238,7 @@ def test_false_post_idle_refunds_only_transient_d_not_unknown_root():
     assert m._counts['D']==0 and m._counts['R']==1 and p.operation is not None
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 def test_binding_pins_root_and_atomic_start_consumes_forever():
     native_run("""
@@ -237,6 +262,7 @@ def test_binding_pins_root_and_atomic_start_consumes_forever():
     print('MANAGED_BODY_COMPLETE')
     """)
 
+
 def test_unbound_e11_cannot_admit_and_prestart_release_allows_rebind():
     native_run("""
     L,x,actual,c,r,f,receipt=rolled_back()
@@ -250,6 +276,7 @@ def test_unbound_e11_cannot_admit_and_prestart_release_allows_rebind():
     print('MANAGED_BODY_COMPLETE')
     """)
 
+
 def test_binding_revalidates_replaced_parameters_before_start():
     native_run("""
     L,x,actual,c,r,f,receipt=rolled_back()
@@ -262,6 +289,7 @@ def test_binding_revalidates_replaced_parameters_before_start():
     assert not m._root(r,L)[1]['failure_consumed'] and Connection.calls==1
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 def test_e09_without_prior_e08_cannot_establish_a_witness():
     run("""
@@ -282,13 +310,17 @@ def test_e09_without_prior_e08_cannot_establish_a_witness():
     print('MANAGED_BODY_COMPLETE')
     """)
 
-@pytest.mark.parametrize('stage', ['probe','close','rollback'])
+
+@pytest.mark.parametrize("stage", ["probe", "close", "rollback"])
 def test_strict_driver_error_preserves_primary_and_unknown(stage):
-    native_run("""
+    native_run(
+        """
     L,x,actual,c=setup_physical();r=active_root(c,L);arm(r,x,L)
     primary=KeyboardInterrupt('nonsecret');cause=ValueError('cause')
     primary.__cause__=cause;primary.__suppress_context__=True
-    """+stage+"""_error=primary
+    """
+        + stage
+        + """_error=primary
     try:n.rollback(r,execution_ledger=L,confirm_failure=True)
     except BaseException as caught:
         assert caught is primary and caught.__cause__ is cause and caught.__suppress_context__
@@ -296,7 +328,9 @@ def test_strict_driver_error_preserves_primary_and_unknown(stage):
     assert m._root(r,L)[1]['state']=='UNKNOWN' and L.uncertainty.present
     assert not m._root(r,L)[1]['failure_verified'] and m._counts['D']>=1
     print('MANAGED_BODY_COMPLETE')
-    """)
+    """
+    )
+
 
 def test_ordinary_receipt_and_released_root_cannot_bind():
     native_run("""
@@ -312,6 +346,7 @@ def test_ordinary_receipt_and_released_root_cannot_bind():
     print('MANAGED_BODY_COMPLETE')
     """)
 
+
 def test_prior_uncertainty_never_becomes_failure_authority():
     native_run("""
     L,x,actual,c,r,f,receipt=rolled_back();a,req=prepare_failure(x,L,f)
@@ -321,25 +356,34 @@ def test_prior_uncertainty_never_becomes_failure_authority():
     print('MANAGED_BODY_COMPLETE')
     """)
 
-@pytest.mark.parametrize('mutation', [
-    "object.__setattr__(req,'context',B._return_context_raw(expected=(f,)))",
-    "object.__setattr__(req.context,'expected',tuple([f]))",
-    "object.__setattr__(f.work_id,'int',99)",
-    "object.__setattr__(f,'cycle',2)",
-    "object.__setattr__(req,'parameters',req.parameters[:8]+('other',b'evidence'))",
-    "object.__setattr__(req,'statement',C.get_statement('E14'))",
-])
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "object.__setattr__(req,'context',B._return_context_raw(expected=(f,)))",
+        "object.__setattr__(req.context,'expected',tuple([f]))",
+        "object.__setattr__(f.work_id,'int',99)",
+        "object.__setattr__(f,'cycle',2)",
+        "object.__setattr__(req,'parameters',req.parameters[:8]+('other',b'evidence'))",
+        "object.__setattr__(req,'statement',C.get_statement('E14'))",
+    ],
+)
 def test_proof_rejects_all_carrier_mutations_before_admission(mutation):
-    native_run("""
+    native_run(
+        """
 L,x,actual,c,r,f,receipt=rolled_back();a,req=prepare_failure(x,L,f)
 m.bind_failure_settlement(a,r,receipt,execution_ledger=L)
 rf=active_root(c,L)
-"""+mutation+"""
+"""
+        + mutation
+        + """
 expect(E.INVALID_OBSERVATION,lambda:m.admit(rf,a,execution_ledger=L))
 assert not m._root(r,L)[1]['failure_consumed']
 assert not old._domain.stopped
 print('MANAGED_BODY_COMPLETE')
-""")
+"""
+    )
+
 
 def test_second_association_busy_and_prestart_release_drops_only_a_charge():
     native_run("""
@@ -355,6 +399,7 @@ def test_second_association_busy_and_prestart_release_drops_only_a_charge():
     m.bind_failure_settlement(a2,r,receipt,execution_ledger=L)
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 def test_exact_and_one_byte_short_binding_capacity_count_snapshot_occurrences():
     native_run("""
@@ -385,6 +430,7 @@ def test_exact_and_one_byte_short_binding_capacity_count_snapshot_occurrences():
     print('MANAGED_BODY_COMPLETE')
     """)
 
+
 def test_max_domain_snapshot_bound_and_aliases_are_occurrences():
     run("""
     U=UUID(int=2**128-1)
@@ -405,17 +451,26 @@ def test_max_domain_snapshot_bound_and_aliases_are_occurrences():
     print('MANAGED_BODY_COMPLETE')
     """)
 
-@pytest.mark.parametrize('key,value', [('E14',18),('E09',None)])
-def test_contradictory_observation_disables_only_proof(key,value):
-    run("""
+
+@pytest.mark.parametrize("key,value", [("E14", 18), ("E09", None)])
+def test_contradictory_observation_disables_only_proof(key, value):
+    run(
+        """
     L,x,actual,c=setup_physical();r=active_root(c,L);f=arm(r,x,L)
-    """+("issue(r,x,L,'E14',(),18)" if key=='E14' else
-    "issue(r,x,L,'E09',(f.work_id,f.token,3,1,1),None,B._return_context_raw(expected=(f,)))")+"""
+    """
+        + (
+            "issue(r,x,L,'E14',(),18)"
+            if key == "E14"
+            else "issue(r,x,L,'E09',(f.work_id,f.token,3,1,1),None,B._return_context_raw(expected=(f,)))"
+        )
+        + """
     rec=m._root(r,L)[1]
     assert rec['failure_disabled'] and not rec['failure_eligible']
     assert rec['state']=='ACTIVE' and not L.uncertainty.present
     print('MANAGED_BODY_COMPLETE')
-    """)
+    """
+    )
+
 
 def test_native_boundary_rejects_nonbool_before_d_or_driver():
     native_run("""
@@ -430,6 +485,7 @@ def test_native_boundary_rejects_nonbool_before_d_or_driver():
     assert Cursor.calls==[] and Connection.calls==0
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 def test_preflight_accessor_error_contains_without_reserving_rollback():
     native_run("""
@@ -451,6 +507,7 @@ def test_preflight_accessor_error_contains_without_reserving_rollback():
     print('MANAGED_BODY_COMPLETE')
     """)
 
+
 def test_wrong_physical_or_ledger_and_root_receipt_are_rejected():
     native_run("""
     L,x,actual,c,r,f,receipt=rolled_back();a,req=prepare_failure(x,L,f)
@@ -465,6 +522,7 @@ def test_wrong_physical_or_ledger_and_root_receipt_are_rejected():
     assert not m._root(r,L)[1]['failure_consumed']
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 def test_public_result_without_live_issuer_cannot_publish_native_witness():
     run("""
@@ -481,6 +539,7 @@ def test_public_result_without_live_issuer_cannot_publish_native_witness():
     assert m._root(r,L)[1]['failure_xid'] is None
     print('MANAGED_BODY_COMPLETE')
     """)
+
 
 def test_fixed_root_witness_maximum_occurrence_bound():
     run("""

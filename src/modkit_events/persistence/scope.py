@@ -9,15 +9,44 @@ _P = ParamSpec("_P")
 _T = TypeVar("_T")
 # Normative fixed set, independent of interpreter Unicode tables and SQL locale.
 _WHITESPACE = frozenset(
-    (9, 10, 11, 12, 13, 28, 29, 30, 31, 32, 133, 160, 5760,
-     8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202,
-     8232, 8233, 8239, 8287, 12288)
+    (
+        9,
+        10,
+        11,
+        12,
+        13,
+        28,
+        29,
+        30,
+        31,
+        32,
+        133,
+        160,
+        5760,
+        8192,
+        8193,
+        8194,
+        8195,
+        8196,
+        8197,
+        8198,
+        8199,
+        8200,
+        8201,
+        8202,
+        8232,
+        8233,
+        8239,
+        8287,
+        12288,
+    )
 )
 _HEADER = b"MKSC\x01"
 
 
 def _scope_boundary(function: Callable[_P, _T]) -> Callable[_P, _T]:
     """Scope-only validation boundary, not a generic persistence sanitizer."""
+
     @wraps(function)
     def checked(*args: _P.args, **kwargs: _P.kwargs) -> _T:
         try:
@@ -32,6 +61,7 @@ def _scope_boundary(function: Callable[_P, _T]) -> Callable[_P, _T]:
             error.__context__ = None
             error.__suppress_context__ = True
             raise
+
     return checked
 
 
@@ -41,9 +71,7 @@ def _reject_field(reject: Callable[[], NoReturn] | None) -> NoReturn:
     raise ValueError
 
 
-def _encode_field(
-    value: object, *, _reject: Callable[[], NoReturn] | None = None
-) -> bytes:
+def _encode_field(value: object, *, _reject: Callable[[], NoReturn] | None = None) -> bytes:
     """Share field checks while allowing only private intentional-error translation."""
     if type(value) is not str:
         _reject_field(_reject)
@@ -185,9 +213,7 @@ def decode_canonical_scope(raw: bytes) -> Scope:
     return _decode_canonical_scope_core(raw)
 
 
-def _scope_raw(
-    application: str, tenant: str | None = None, owner: str | None = None
-) -> Scope:
+def _scope_raw(application: str, tenant: str | None = None, owner: str | None = None) -> Scope:
     from .errors import _reject_validation
 
     for value in (application, tenant, owner):
@@ -202,9 +228,7 @@ def _scope_raw(
     return result
 
 
-def _encode_scope_fields_raw(
-    scope: Scope, /
-) -> tuple[bytes, bytes | None, bytes | None]:
+def _encode_scope_fields_raw(scope: Scope, /) -> tuple[bytes, bytes | None, bytes | None]:
     from .errors import _reject_validation
 
     return _fields(scope, _reject=_reject_validation)

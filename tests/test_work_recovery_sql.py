@@ -19,7 +19,7 @@ def function():
     source = sql()
     start = source.find("CREATE FUNCTION modkit_events.e13(")
     assert start >= 0, "E13 is missing from the migration"
-    return source[start:source.index("$body$;", start) + len("$body$;")]
+    return source[start : source.index("$body$;", start) + len("$body$;")]
 
 
 def test_e13_exact_abi_security_and_prefix():
@@ -34,16 +34,24 @@ def test_e13_exact_abi_security_and_prefix():
     ]
     assert "VOLATILE SECURITY DEFINER CALLED ON NULL INPUT" in body
     assert "SET search_path = pg_catalog, pg_temp" in body
-    assert "REVOKE ALL ON FUNCTION modkit_events.e13(pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.uuid,pg_catalog.int4) FROM PUBLIC;" in sql()
+    assert (
+        "REVOKE ALL ON FUNCTION modkit_events.e13(pg_catalog.bytea,pg_catalog.text,pg_catalog.int4,pg_catalog.uuid,pg_catalog.int4) FROM PUBLIC;"
+        in sql()
+    )
     assert hashlib.sha256(historical_prefix_view(sql().encode())[:378764]).hexdigest() == (
         "ef9c3eafac5713a2ad07c62dbde476c1d0d751897a03d0e685788a8766fc2731"
     )
 
 
-@pytest.mark.parametrize("guard", (
-    "_utf8_valid(p_namespace,256,TRUE)", "p_limit NOT BETWEEN 1 AND 256",
-    "p_discovery_budget NOT BETWEEN 1 AND 4096", "p_discovery_budget<p_limit",
-))
+@pytest.mark.parametrize(
+    "guard",
+    (
+        "_utf8_valid(p_namespace,256,TRUE)",
+        "p_limit NOT BETWEEN 1 AND 256",
+        "p_discovery_budget NOT BETWEEN 1 AND 4096",
+        "p_discovery_budget<p_limit",
+    ),
+)
 def test_e13_arguments_before_discovery(guard):
     body = function()
     assert body.index("ERRCODE='PZ005'") < body.index(guard)
@@ -61,7 +69,11 @@ def test_e13_raw_progress_and_nonblocking_order():
     assert visit < candidate < parent < work < attempt
     assert "wr.work_id>cursor_value" in body
     assert "cursor_value := discovered.work_id" in body
-    for message in ("missing work subscription", "missing discovered work", "missing current dispatch"):
+    for message in (
+        "missing work subscription",
+        "missing discovered work",
+        "missing current dispatch",
+    ):
         assert message in body
     assert body.count("SKIP LOCKED") == 3
     assert "AND current_attempt.dispatch_id=w.dispatch_id" in body
@@ -112,7 +124,10 @@ def test_e13_exact_mutation_capacity_history_receipts():
     assert "expected_work.token := NULL" in body
     assert "expected_work.lease_until := NULL" in body
     assert "updated_work IS DISTINCT FROM expected_work" in body
-    assert "IF expected_work.state COLLATE pg_catalog.\"C\" IN ('expired','failed') AND NOT is_job THEN" in body
+    assert (
+        "IF expected_work.state COLLATE pg_catalog.\"C\" IN ('expired','failed') AND NOT is_job THEN"
+        in body
+    )
     assert "subscription_row.nonterminal_count-1" in body
     assert "updated_parent IS DISTINCT FROM expected_parent" in body
     for field in ("work_id", "cycle", "attempt", "ownership_revision", "evidence", "recorded_at"):
@@ -128,8 +143,14 @@ def test_e13_buffered_scan_and_no_hidden_execution():
     assert "IF visited_count=p_discovery_budget OR item_count=p_limit THEN" in body
     assert "FOREACH emitted IN ARRAY emitted_rows LOOP" in body
     assert "'header'::pg_catalog.text,visited_count,cursor_value,exhausted_value" in body
-    assert "'item'::pg_catalog.text,NULL::pg_catalog.int4,NULL::pg_catalog.uuid,NULL::pg_catalog.bool" in body
+    assert (
+        "'item'::pg_catalog.text,NULL::pg_catalog.int4,NULL::pg_catalog.uuid,NULL::pg_catalog.bool"
+        in body
+    )
     assert body.index("RETURN QUERY") > body.index("item_count := item_count+1")
     calls = re.findall(r"modkit_events\.(e\d+)\(", body.split("AS $body$", 1)[1])
     assert calls == ["e15"]
-    assert not re.search(r"\b(?:DELETE|MERGE|TRUNCATE|EXECUTE|COMMIT|ROLLBACK|OFFSET)\b|EXCEPTION WHEN|setval|nextval|pg_notify", body)
+    assert not re.search(
+        r"\b(?:DELETE|MERGE|TRUNCATE|EXECUTE|COMMIT|ROLLBACK|OFFSET)\b|EXCEPTION WHEN|setval|nextval|pg_notify",
+        body,
+    )
