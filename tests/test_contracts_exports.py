@@ -73,7 +73,7 @@ def test_public_objects_preserve_legacy_and_expose_managed_contracts():
     assert len(modkit_events.__all__) == len(set(modkit_events.__all__))
 
 
-def test_base_import_without_extras_or_sibling_packages():
+def test_base_import_without_extras_or_sibling_packages(tmp_path):
     source = Path(__file__).resolve().parents[1] / "src"
     code = """
 import sys, importlib.abc, logging
@@ -92,7 +92,15 @@ assert tuple(logging.getLogger().handlers) == initial
 assert not hasattr(modkit_events, 'PydanticPayloadValidator')
 """
     result = subprocess.run(
-        [sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(source)!r});\n" + code],
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-X",
+            "pycache_prefix=" + str(tmp_path / "unused-bytecode"),
+            "-c",
+            f"import sys; sys.path.insert(0, {str(source)!r});\n" + code,
+        ],
         capture_output=True,
         text=True,
         timeout=15,

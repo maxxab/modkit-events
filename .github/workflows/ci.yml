@@ -92,10 +92,20 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q tests/test_redis.py
       - run: python -m build
-      - run: python scripts/check_wheel.py dist/modkit_events-0.1.0-py3-none-any.whl --require-redis
+      - run: python scripts/check_wheel.py dist/*.whl --require-redis
       - name: Rebuild sdist and verify installed adapters
         run: |
           mkdir sdist-check
-          tar -xzf dist/modkit_events-0.1.0.tar.gz -C sdist-check
-          python -m build --wheel sdist-check/modkit_events-0.1.0 --outdir sdist-wheels
-          python sdist-check/modkit_events-0.1.0/scripts/check_wheel.py sdist-wheels/modkit_events-0.1.0-py3-none-any.whl --require-redis
+          python - <<'PY'
+          import sys, tarfile, tomllib
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from release_verify import audit
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          archive = Path("dist") / ("modkit_events-" + version + ".tar.gz")
+          audit(archive, "modkit-events", version)
+          with tarfile.open(archive) as source:
+              source.extractall("sdist-check", filter="data")
+          PY
+          python -m build --wheel sdist-check/modkit_events-* --outdir sdist-wheels
+          python sdist-check/modkit_events-*/scripts/check_wheel.py sdist-wheels/*.whl --require-redis
