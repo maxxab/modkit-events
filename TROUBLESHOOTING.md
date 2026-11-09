@@ -64,3 +64,27 @@ Evidence: sibling `resume-events-20261109/redis/{runtime.json,execution.log}`,
 ### Later reconciliation: failed native fixture disposal
 
 The preservation statement above describes the original failure. A separate exact human approval subsequently authorized failed-r3 disposal; Workers completed the8pinned graceful-stop/wait/nonforce-removal/absence commands. Receipt: sibling resume-workers-20261109/native-r3-disposal-completion.json, disposition EXACT_FAILED_FIXTURE_DISCARDED_NOT_QUALIFIED. Predecessor Events independently verified all17saved result/capture hashes (resume-events-20261109/rollover-checkpoint-2/disposal-receipt-verification.json). No SQL replay or successful installation is established; original native attempt and disposal grants are consumed. Redis UNKNOWN is unaffected. No runtime operation was performed by this handoff.
+
+## 2026-11-09: Redis8 fixture found after an earlier absence observation
+
+A fresh, scoped read-only snapshot found the exact legacy Redis8 container in
+Docker's created state, nonrunning with PID0. CID
+`e236ce4b679e5439e89de1aad6380ff6f5b41abde87a736709777597a5175497`, original
+name/image/packet label match. The earlier saved19:43:35UTC exact-name absence
+observation is preserved. The create-completion timing and reason for the two
+different observations remain UNKNOWN; no Redis test success or historical
+no-effects conclusion follows.
+
+The container has been left untouched. Its resource owner prepared a separately
+reviewed disposal-only packet (9697d8f4; reviewa7887ee4), with fresh original
+configuration/created-state checks, one nonforce removal and exact CID/name/label
+absence checks under the canonical slot. Fresh specific user approval is pending;
+UNKNOWN in-container/tmpfs contents would be lost, while host socket files and
+all prior evidence remain preserved. No old create/native/disposal grant covers
+this removal. No automatic kill/wait, retry, native admission or uncertainty
+clearance follows from preparation acceptance.
+
+Evidence: sibling resume-workers-20261109/workers-freeze-v4/
+native-admission-readonly-v1/{result,interpretation}.json and
+redis8-disposal-v2-independent-review.json; Events sibling
+resume-events-20261109/redis8-disposal-v2/REVIEW-PACKET.md and peer-acceptance.json.
