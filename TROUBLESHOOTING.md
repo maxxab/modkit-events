@@ -126,3 +126,23 @@ native admission was created. The next boundary is separately reviewed logical
 fence reconciliation with applicable authority, not another disposal attempt.
 Evidence: sibling `resume-events-20261109/redis8-readonly-reconciliation-v1/`
 contains both immutable observation sets and `combined-observation.json`.
+
+### 2026-11-10: recoverable local fence reconciliation completed
+
+A new, separately scoped and independently reviewed reconciliation ran once.
+The unchanged shared-lock helper preserved the exact `6c0b01a9` predecessor;
+both the preflight and locked copies were verified again before completion.
+Three fresh read-only exact CID/name/packet-label queries returned absence with
+exits `[1, 1, 0]`; their six captures and the 32 bound inputs verified unchanged.
+The local canonical marker is now absent. The distinct result `d0277050` and
+terminal receipt `33ce28d0` are in sibling
+`resume-events-20261109/fence-reconciliation-v1/attempt/`.
+
+This supersedes the earlier UNRESOLVED current-state statements, not their
+historical facts. Original create/removal outcomes and cause of absence remain
+UNKNOWN. The consumed original grant, claim and failure evidence are unchanged.
+The terminal failed-fixture disposition makes no historical success claim.
+No Docker mutation, removal retry, signal, kill/wait or native execution occurred.
+Neither this receipt nor an absent marker grants native execution; future native
+admission requires the new typed evidence contract and separately reviewed
+applicable scope. The old success-only contract cannot be satisfied retroactively.
