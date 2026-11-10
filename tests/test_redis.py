@@ -195,30 +195,50 @@ def test_bad_configuration():
         JsonCodec().decode(b'{"event_id":"a","event_id":"b","name":"demo","payload":{}}')
 
 
-async def test_stale_handler_cannot_record_retry_or_dead_letter(stream):
+@pytest.mark.parametrize("error_type", [TerminalEventError, RuntimeError])
+@pytest.mark.parametrize("replacement_owner", [False, True])
+async def test_stale_handler_cannot_record_retry_or_dead_letter(
+    stream, error_type, replacement_owner
+):
     from modkit_events import OwnershipLost
 
-    store = RedisClaimStore(stream.client, namespace=stream.namespace, lease_seconds=0.01)
+    store = RedisClaimStore(stream.client, namespace=stream.namespace, lease_seconds=300)
+    key = store._key("workers", "id")
+    calls = []
+    successor = []
 
     async def expired(event):
-        await asyncio.sleep(0.03)
-        raise TerminalEventError("old owner")
+        calls.append(event.event_id)
+        previous_token = await stream.client.get(key)
+        assert previous_token is not None
+        assert await stream.client.pttl(key) > 0
+        # Expire only this test-owned claim after the handler has started.
+        assert await stream.client.pexpire(key, 0)
+        assert await stream.client.exists(key) == 0
+        if replacement_owner:
+            result = await store.claim("workers", "id")
+            assert result.state == "acquired"
+            assert result.claim is not None
+            assert result.claim.token.encode() != previous_token
+            successor.append(result.claim)
+        raise error_type("old owner")
 
     await stream.publish(Event("id", "demo", {}))
     delivery = (await stream.read())[0]
     with pytest.raises(OwnershipLost):
         await stream.process(delivery, consuming(store, expired))
+
+    assert calls == ["id"]
     assert await stream.failure_count(delivery) == 0
     assert await stream.client.xlen(stream.dlq_stream) == 0
     assert (await stream.client.xpending(stream.stream, stream.group))["pending"] == 1
-
-    async def retry_expired(event):
-        await asyncio.sleep(0.03)
-        raise RuntimeError("old owner")
-
-    with pytest.raises(OwnershipLost):
-        await stream.process(delivery, consuming(store, retry_expired))
-    assert await stream.failure_count(delivery) == 0
+    if replacement_owner:
+        assert len(successor) == 1
+        assert await stream.client.get(key) == successor[0].token.encode()
+        assert await stream.client.pttl(key) > 0
+        assert (await store.claim("workers", "id")).state == "inflight"
+    else:
+        assert await stream.client.exists(key) == 0
 
 
 async def test_terminal_delivery_does_not_replay_already_fetched_duplicate(stream):
