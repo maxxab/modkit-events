@@ -210,6 +210,8 @@ tests/test_native_recovery_issuer.py
 tests/test_native_recovery_lifecycle.py
 tests/test_native_recovery_preflight.py
 tests/test_native_recovery_profile.py
+tests/recovery_test_support.py
+tests/test_recovery_platform_gate.py
 tests/test_native_renewal_codec.py
 tests/test_native_renewal_contract.py
 tests/test_native_renewal_issuer.py
@@ -458,6 +460,18 @@ class ArtifactPolicyTests(unittest.TestCase):
                 files = fixture("sdist")
                 del files[member]
                 with self.assertRaisesRegex(ValueError, "required"):
+                    self.audit("sdist", files)
+
+    def test_sdist_requires_reviewed_recovery_profile_test_support(self):
+        self.audit("sdist", fixture("sdist"))
+        for member in (
+            "tests/recovery_test_support.py",
+            "tests/test_recovery_platform_gate.py",
+        ):
+            with self.subTest(missing=member):
+                files = fixture("sdist")
+                del files[member]
+                with self.assertRaisesRegex(ValueError, "missing required artifact member"):
                     self.audit("sdist", files)
 
     def test_backend_forced_public_ignore_rules_are_accepted(self):

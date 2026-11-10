@@ -186,6 +186,8 @@ tests/test_native_recovery_issuer.py
 tests/test_native_recovery_lifecycle.py
 tests/test_native_recovery_preflight.py
 tests/test_native_recovery_profile.py
+tests/recovery_test_support.py
+tests/test_recovery_platform_gate.py
 tests/test_native_renewal_codec.py
 tests/test_native_renewal_contract.py
 tests/test_native_renewal_issuer.py
