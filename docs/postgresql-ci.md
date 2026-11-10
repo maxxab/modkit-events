@@ -46,6 +46,14 @@ unchanged.
    read wrappers, mutation-access denial, private-function denial and role-switch
    denial. Only runtime/reconciler may call E14; operator must be denied.
 
+The extended lane also checks three negative preflight cases: an unselected LOGIN
+owner, the runtime role selected as owner, and an already-installed target schema.
+Each must return the exact expected PZ011 ownership/target refusal. A separate
+owner connection observes namespace/object identities, owners, ACLs and receipt
+rows before and after the acknowledged rollback; any difference fails the lane.
+These additional cases require their own exact-commit hosted result and are not
+included in the earlier six-check result below.
+
 Each unexpected error stops the lane. It never repairs a fixture or retries an
 uncertain operation. A passed lane qualifies these synthetic installed-wheel
 installation and ACL cases only. It does not qualify the complete native transport,

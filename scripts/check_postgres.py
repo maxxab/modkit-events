@@ -283,6 +283,46 @@ def restricted_checks(psycopg, values):
         print("PASS restricted-role authorization:", role)
 
 
+def installation_snapshot(psycopg):
+    """Read the installation identity from a separate unprivileged connection."""
+    with psycopg.connect(**connection_options("modkit_ci_owner_login")) as observer:
+        with observer.transaction():
+            selected_role(observer, psycopg, "modkit_ci_owner_login")
+            schema = observer.execute(
+                "SELECT oid,nspowner,nspacl::text FROM pg_namespace WHERE nspname='modkit_events'"
+            ).fetchone()
+            if schema is None:
+                return None
+            relations = observer.execute(
+                "SELECT oid,relname,relowner,relacl::text FROM pg_class WHERE relnamespace='modkit_events'::regnamespace ORDER BY oid"
+            ).fetchall()
+            functions = observer.execute(
+                "SELECT oid,proname,proowner,proacl::text FROM pg_proc WHERE pronamespace='modkit_events'::regnamespace ORDER BY oid"
+            ).fetchall()
+            receipts = observer.execute(
+                "SELECT * FROM modkit_events.schema_versions ORDER BY component"
+            ).fetchall()
+            return schema, relations, functions, receipts
+
+
+def preflight_refusal(psycopg, initial, *, login, select, present):
+    before = installation_snapshot(psycopg)
+    assert (before is not None) is present, "unexpected fixture state before rejection"
+    with psycopg.connect(**connection_options(login)) as connection:
+        try:
+            with connection.transaction():
+                if select:
+                    selected_role(connection, psycopg, login)
+                connection.execute(initial, prepare=False)
+                raise AssertionError("invalid installation unexpectedly succeeded")
+        except psycopg.Error as error:
+            assert error.sqlstate == "PZ011", error.sqlstate
+            assert error.diag.message_primary == "invalid installation ownership or target"
+    # The failed transaction has exited and acknowledged rollback before this read.
+    assert installation_snapshot(psycopg) == before, "fixture changed after rejected installation"
+    print("PASS installation preflight refusal:", login, "selected", select, "existing", present)
+
+
 def main():
     require_ci_environment(os.environ)
     if (
@@ -310,6 +350,8 @@ def main():
     assert migration.resources[1].path.endswith("grants_runtime.sql")
     receipt = read_owner_receipt(migration)
     bootstrap(psycopg)
+    preflight_refusal(psycopg, initial, login="modkit_ci_owner_login", select=False, present=False)
+    preflight_refusal(psycopg, initial, login="modkit_ci_runtime_login", select=True, present=False)
     # This is an intentional rollback test followed by a fresh acknowledged commit.
     # Any unexpected error stops the job; it is never retried or repaired in-place.
     with psycopg.connect(**connection_options("modkit_ci_owner_login")) as connection:
@@ -338,6 +380,7 @@ def main():
                 "SELECT count(*) FROM modkit_events.schema_versions"
             ).fetchone() == (1,)
         print("PASS installation, complete grants and six-bind receipt committed")
+    preflight_refusal(psycopg, initial, login="modkit_ci_owner_login", select=True, present=True)
     restricted_checks(psycopg, values)
     print(
         "PASS synthetic installed-wheel PostgreSQL checks; migration:", migration.migration_digest
