@@ -57,6 +57,7 @@
 - **qualification:** record clean installed checks and legacy Redis gate (`71aa673fe492`)
 - **handoff:** preserve unresolved Redis disposal for ownership transfer (`340d6d6981bb`)
 - **qualification:** record current archive and resource observations (`ae2ffdd1bdc2`)
+- **qualification:** record reconciled legacy fixture fence (`13d8f09a2b62`)
 
 ### Testing
 
