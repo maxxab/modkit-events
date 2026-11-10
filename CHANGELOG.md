@@ -78,6 +78,7 @@
 - **events:** isolate resource imports from ambient drivers ([c85517b6bde9](https://github.com/maxxab/modkit-events/commit/c85517b6bde984c731489b837b56cd28be67d8f9))
 - **packaging:** align staged checker fixture with installed closure ([80e701340d9a](https://github.com/maxxab/modkit-events/commit/80e701340d9a9ed43a9934ee8c7b411f5398a1a4))
 - **redis:** make stale-owner fencing deterministic ([9aba2aeb979c](https://github.com/maxxab/modkit-events/commit/9aba2aeb979c0f06eacc248d4e5bc8a48fa52ed2))
+- **postgresql:** exercise invalid installation preflight cases ([bae244f532f3](https://github.com/maxxab/modkit-events/commit/bae244f532f3f7af3f6e0cc2ce27f5f15705d594))
 
 ### Build System
 
