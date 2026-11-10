@@ -55,7 +55,7 @@ def test_connection_target_cannot_be_selected_by_caller():
         assert settings["connect_timeout"] == 5
         assert settings["user"] == name
         assert settings["passfile"] == "/dev/null"
-        assert settings["service"] == ""
+        assert "service" not in settings  # Empty service names still trigger libpq lookup.
     with pytest.raises(ValueError, match="unknown fixture login"):
         module.connection_options("postgres")
 

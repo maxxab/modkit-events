@@ -78,7 +78,6 @@ def connection_options(login):
         "password": PASSWORD,
         "connect_timeout": 5,
         "passfile": "/dev/null",
-        "service": "",
         "sslmode": "disable",
         "options": "-c statement_timeout=10000 -c lock_timeout=2000 -c idle_in_transaction_session_timeout=15000 -c timezone=UTC",
         "autocommit": True,
