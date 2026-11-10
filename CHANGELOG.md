@@ -48,6 +48,7 @@
 - **ci:** separate finite recovery and portable platform checks ([587b8ac993ec](https://github.com/maxxab/modkit-events/commit/587b8ac993ecc8c79abb7412ad198dfa915aaadf))
 - **packaging:** include reviewed recovery test support in sdists ([8924d75a0570](https://github.com/maxxab/modkit-events/commit/8924d75a05707c4852352f7a0cf807f62c5c8873))
 - **ci:** verify unsupported backend without installed-test skips ([a9767f8b05f6](https://github.com/maxxab/modkit-events/commit/a9767f8b05f640fb7f91a46882a8c3a4c9ea3296))
+- **installation:** match single-column PostgreSQL return types ([f23132354925](https://github.com/maxxab/modkit-events/commit/f231323549253651045b3dcb064df249271918d0))
 
 ### Documentation
 
