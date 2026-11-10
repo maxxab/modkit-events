@@ -46,6 +46,8 @@
 - **types:** describe validated resource and lifecycle values precisely ([25859258681d](https://github.com/maxxab/modkit-events/commit/25859258681de80f256832ef2c35a021ea42fdd7))
 - **packaging:** preserve migration bytes on Windows checkouts ([4b832a69bd9f](https://github.com/maxxab/modkit-events/commit/4b832a69bd9f2e101febc14803bebc9c399b4079))
 - **ci:** separate finite recovery and portable platform checks ([587b8ac993ec](https://github.com/maxxab/modkit-events/commit/587b8ac993ecc8c79abb7412ad198dfa915aaadf))
+- **packaging:** include reviewed recovery test support in sdists ([8924d75a0570](https://github.com/maxxab/modkit-events/commit/8924d75a05707c4852352f7a0cf807f62c5c8873))
+- **ci:** verify unsupported backend without installed-test skips ([a9767f8b05f6](https://github.com/maxxab/modkit-events/commit/a9767f8b05f640fb7f91a46882a8c3a4c9ea3296))
 
 ### Documentation
 
