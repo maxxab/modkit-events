@@ -69,6 +69,7 @@
 - **handoff:** checkpoint Events for cloud continuation ([158be4c82d56](https://github.com/maxxab/modkit-events/commit/158be4c82d565e7fcc9beed2db084c6338845fb3))
 - **qualification:** record passing cloud package and Redis gates ([f1bb2b771f98](https://github.com/maxxab/modkit-events/commit/f1bb2b771f986a7f49f5ba44950e739f5e35b407))
 - **qualification:** record corrected installation ABI evidence ([e1bbde2dd2e6](https://github.com/maxxab/modkit-events/commit/e1bbde2dd2e6232fdc9f43a84dfc6392c65dc97a))
+- **qualification:** record verified PostgreSQL installation checks ([54adbffbe1de](https://github.com/maxxab/modkit-events/commit/54adbffbe1de29043ffaedd4e111cccde930929f))
 
 ### Testing
 
