@@ -49,6 +49,7 @@
 - **packaging:** include reviewed recovery test support in sdists ([8924d75a0570](https://github.com/maxxab/modkit-events/commit/8924d75a05707c4852352f7a0cf807f62c5c8873))
 - **ci:** verify unsupported backend without installed-test skips ([a9767f8b05f6](https://github.com/maxxab/modkit-events/commit/a9767f8b05f640fb7f91a46882a8c3a4c9ea3296))
 - **installation:** match single-column PostgreSQL return types ([f23132354925](https://github.com/maxxab/modkit-events/commit/f231323549253651045b3dcb064df249271918d0))
+- **ci:** refuse existing public database objects ([f2c2a1bd5efa](https://github.com/maxxab/modkit-events/commit/f2c2a1bd5efa5afca6e9f3f0006d61a1f083ea84))
 
 ### Documentation
 
@@ -88,6 +89,7 @@
 - pin current v7 checkout and Python setup actions ([d98a979f3f22](https://github.com/maxxab/modkit-events/commit/d98a979f3f228ce9c1cdf82bb9021e6b96fc5fdd))
 - publish tested releases with trusted identity ([d0cbd54c5c9b](https://github.com/maxxab/modkit-events/commit/d0cbd54c5c9b04df96c420ecae9c71cc4ed8e521))
 - **events:** separate installed behavior from source qualification ([a41687360a57](https://github.com/maxxab/modkit-events/commit/a41687360a573f3b0381d7986b9da31d68bc6ed9))
+- **postgresql:** verify fresh installed Events database boundaries ([81afd6aee969](https://github.com/maxxab/modkit-events/commit/81afd6aee969172b9c07d77f46d660eaa56b88b9))
 
 ### Maintenance
 
