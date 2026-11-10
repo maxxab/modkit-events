@@ -339,6 +339,14 @@ source revision passed every release check. Native installation, optional driver
 service recovery and platform qualification remain open; see the
 [qualification record](docs/qualification/2026-11-09.md).
 
+The broad CI matrix tests portable behavior on current Python 3.12–3.15 across
+Linux, Windows and macOS. Recovery acceptance uses the deliberately finite
+Linux CPython 3.12.3 and 3.13.5 profiles in two additional mandatory package lanes.
+Other hosts run profile-refusal checks; profile-dependent acceptance tests report
+explicit skips. POSIX filesystem/durability controls run only on POSIX hosts,
+while in-memory ZIP cleanup tests remain portable. These source checks do not
+qualify native PostgreSQL installation or live runtime behavior.
+
 Real Redis tests require a disposable standalone server. Set `MODKIT_REDIS_URL`
 and `MODKIT_REQUIRE_REDIS=1` to make missing service configuration a failure.
 Tests use random namespaced keys and clean those keys only, never `FLUSHDB`.

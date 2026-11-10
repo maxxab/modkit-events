@@ -5,12 +5,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from recovery_test_support import requires_recovery_profile
 from test_native_recovery_profile import profile, readiness
 
 from modkit_events.persistence.errors import PersistenceError
 
 
 class PreflightTests(unittest.TestCase):
+    @requires_recovery_profile
     def test_requirements_never_import_driver(self):
         p = profile(self)
         with patch.dict(sys.modules, {"psycopg": None, "psycopg.pq": None}):
@@ -18,6 +20,7 @@ class PreflightTests(unittest.TestCase):
             with self.assertRaises(PersistenceError):
                 p.verify_recovery_driver(req)
 
+    @requires_recovery_profile
     def test_deferred_driver_exact_profile(self):
         p = profile(self)
         req = p.recovery_requirements(readiness=readiness())
@@ -43,6 +46,7 @@ class PreflightTests(unittest.TestCase):
             with self.assertRaises(PersistenceError):
                 p.recovery_requirements(readiness=readiness())
 
+    @requires_recovery_profile
     def test_forged_nested_limits_never_runs_comparison_hooks(self):
         p = profile(self)
         req = p.recovery_requirements(readiness=readiness())
@@ -55,6 +59,7 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaises(PersistenceError):
             p.verify_recovery_driver(req)
 
+    @requires_recovery_profile
     def test_simulated313_verified_receipt_identity_and_stale_profile_refusal(self):
         from test_native_recovery_profile import simulated313
 

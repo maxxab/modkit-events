@@ -4,6 +4,7 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
+from recovery_test_support import requires_recovery_profile
 from test_native_recovery_contract import header, request
 
 from modkit_events.persistence import native_codec as N
@@ -15,6 +16,7 @@ def wire_header():
     return (b"\x01", b"header", (0).to_bytes(4, "big"), None, b"\x01") + (None,) * 56
 
 
+@requires_recovery_profile
 class CodecTests(unittest.TestCase):
     def plan(self, req=None):
         try:

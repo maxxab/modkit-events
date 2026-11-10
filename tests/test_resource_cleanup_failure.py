@@ -1,6 +1,7 @@
 """Bounded controls for first-primary preservation at resource cleanup boundaries."""
 
 import io
+import os
 import types
 import zipfile
 
@@ -54,7 +55,9 @@ def _assert_primary(escaped, primary, received, metadata, mode):
 def _zip_bytes():
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
-        archive.writestr("manifest.json", b"{}")
+        info = zipfile.ZipInfo("manifest.json")
+        info.create_system = 3  # Explicit UNIX metadata, independent of the fixture host.
+        archive.writestr(info, b"{}")
     return stream.getvalue()
 
 
@@ -163,9 +166,13 @@ def test_without_primary_first_close_failure_prevents_success(monkeypatch, bound
     assert attempts == ([102, 101] if boundary == "descriptor" else ["archive", "stream"])
 
 
-def test_successful_resource_reads_remain_available(tmp_path):
+@pytest.mark.skipif(os.name != "posix", reason="POSIX resource backend required")
+def test_successful_posix_resource_reads_remain_available(tmp_path):
     (tmp_path / "manifest.json").write_bytes(b"{}")
     with resource.PosixLease(tmp_path) as lease:
         assert lease.read("manifest.json") == b"{}"
+
+
+def test_successful_memory_zip_reads_remain_available():
     with resource.ZipLease(_zip_bytes(), "") as lease:
         assert lease.read("manifest.json") == b"{}"

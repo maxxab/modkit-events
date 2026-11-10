@@ -3,6 +3,7 @@
 import unittest
 from dataclasses import replace
 
+from recovery_test_support import requires_recovery_profile
 from test_native_recovery_contract import header, request
 from test_native_recovery_profile import profile
 
@@ -10,6 +11,7 @@ from modkit_events.persistence import managed_lifecycle as m
 from modkit_events.persistence.errors import ErrorCode, _ValidationReject
 
 
+@requires_recovery_profile
 class LifecycleTests(unittest.TestCase):
     def test_short_result_mandatory_guard(self):
         self.assertEqual(

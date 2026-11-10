@@ -4,6 +4,8 @@ import unittest
 from dataclasses import replace
 from uuid import UUID
 
+from recovery_test_support import requires_recovery_profile
+
 from modkit_events.persistence import bindings as B
 from modkit_events.persistence import models as M
 from modkit_events.persistence import rows as R
@@ -35,6 +37,7 @@ def wire_item(fields=None):
     )
 
 
+@requires_recovery_profile
 class ContractTests(unittest.TestCase):
     def decoder(self):
         fn = getattr(R, "_decode_native_recovery_result_raw", None)
@@ -293,6 +296,7 @@ class RawRequestTests(unittest.TestCase):
             self.assertEqual(value.resolution_root_xid, 2**64 - 1)
 
 
+@requires_recovery_profile
 class FullBranchTests(unittest.TestCase):
     def test_inbox_full_canonical_input(self):
         fields = work_fields()

@@ -11,6 +11,8 @@ import pytest
 from modkit_events.persistence import _resource_io as rio
 from modkit_events.persistence import migrations as m
 
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX resource backend required")
+
 SQL = Path(m.__file__).parent / "sql"
 
 

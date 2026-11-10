@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from recovery_test_support import requires_recovery_profile
 from test_native_recovery_codec import wire_header
 from test_native_recovery_contract import request
 
@@ -38,6 +39,7 @@ class Result:
         return self.values[r][c]
 
 
+@requires_recovery_profile
 class IssuerTests(unittest.TestCase):
     def test_header_and_sentinel_materialization(self):
         self.assertTrue(
@@ -91,6 +93,7 @@ class IssuerTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, ErrorCode.CAPACITY_EXCEEDED)
 
 
+@requires_recovery_profile
 class ExecuteTests(unittest.TestCase):
     def test_actual_issuer_serial_flow_and_fault_containment(self):
         from contextlib import ExitStack, nullcontext
@@ -192,6 +195,7 @@ class ExecuteTests(unittest.TestCase):
                     self.assertEqual(calls[-1], "closed")
 
 
+@requires_recovery_profile
 class PreparationTests(unittest.TestCase):
     def test_paid_builder_retains_exact_request_after_reservation(self):
         from contextlib import nullcontext

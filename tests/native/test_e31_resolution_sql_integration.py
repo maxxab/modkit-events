@@ -1523,6 +1523,7 @@ class E31FixtureControls(unittest.TestCase):
         self.assertNotIn('b"run"', admission)
 
 
+@unittest.skipUnless(os.name == "posix", "POSIX directory durability controls required")
 class E31RetentionControls(unittest.TestCase):
     """Mocks record process calls; these cases never create an actual process."""
 

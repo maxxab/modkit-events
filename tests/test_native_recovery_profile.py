@@ -9,6 +9,7 @@ from sys import getsizeof
 from unittest.mock import patch
 from uuid import UUID
 
+from recovery_test_support import requires_recovery_profile
 from test_native_recovery_contract import header, request
 
 from modkit_events.persistence import bindings as B
@@ -40,6 +41,7 @@ def readiness():
     )
 
 
+@requires_recovery_profile
 class ProfileTests(unittest.TestCase):
     def test_generic_minima_complete_vector(self):
         p = profile(self)
@@ -158,6 +160,7 @@ def simulated313(p, *, machine="x86_64", debug=0, free_threaded=0, gil=True):
         yield
 
 
+@requires_recovery_profile
 class AdditionalProfileTests(unittest.TestCase):
     def test_simulated313_truthful_profile_and_unchanged_minima(self):
         p = profile(self)

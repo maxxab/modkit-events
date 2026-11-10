@@ -2,9 +2,12 @@
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from modkit_events.persistence import migrations as m
 
@@ -25,6 +28,10 @@ def test_actual_manifest_independent_mkmf_oracle():
         frame += len(path).to_bytes(4, "big") + path + actual
     assert hashlib.sha256(frame).hexdigest() == entry["migration_digest"]
     assert entry["depends_on"] == []
+    if os.name != "posix":
+        with pytest.raises(ValueError, match="^unsupported migration resource backend$"):
+            m.manifest()
+        return
     (migration,) = m.manifest()
     assert migration.migration_digest == entry["migration_digest"]
     for resource in migration.resources:
@@ -41,6 +48,7 @@ def test_import_origin_is_candidate_not_mirror_or_recovery(tmp_path):
     script = r"""
 import importlib.abc
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -54,9 +62,17 @@ class NoDriversOrWorkers(importlib.abc.MetaPathFinder):
             raise AssertionError('Resource import attempted optional dependency')
 sys.meta_path.insert(0, NoDriversOrWorkers())
 from modkit_events.persistence import migrations
-migration, = migrations.manifest()
-for resource in migration.resources:
-    assert migrations.read_sql(migration, resource)
+if os.name == "posix":
+    migration, = migrations.manifest()
+    for resource in migration.resources:
+        assert migrations.read_sql(migration, resource)
+else:
+    try:
+        migrations.manifest()
+    except ValueError as error:
+        assert str(error) == "unsupported migration resource backend"
+    else:
+        raise AssertionError("unsupported resource backend was accepted")
 origins = {}
 for name, module in tuple(sys.modules.items()):
     if name.startswith('modkit_events') and getattr(module, '__file__', None):
