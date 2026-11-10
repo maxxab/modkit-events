@@ -52,6 +52,15 @@ installation and ACL cases only. It does not qualify the complete native transpo
 recovery/fault scenarios, Workers composition, deployment or release readiness.
 No PostgreSQL execution has passed until the exact-commit hosted run says so.
 
+## Verified hosted result
+
+The [17-job run at `9362f0d`](https://github.com/maxxab/modkit-events/actions/runs/42761194113)
+completed successfully, including the fresh PostgreSQL installation and ACL job.
+All six checks above passed against the unchanged corrected Events wheel and
+migration. Standard Actions teardown removed the disposable service and network.
+This result establishes only the stated synthetic scope; broader installation
+negative cases, full native recovery and downstream composition remain separate.
+
 ## Offline preparation
 
 The checker was implemented after nine offline guard tests failed on the missing
