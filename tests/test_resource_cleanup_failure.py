@@ -166,8 +166,11 @@ def test_without_primary_first_close_failure_prevents_success(monkeypatch, bound
     assert attempts == ([102, 101] if boundary == "descriptor" else ["archive", "stream"])
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX resource backend required")
-def test_successful_posix_resource_reads_remain_available(tmp_path):
+def test_posix_resource_backend_contract(tmp_path):
+    if os.name != "posix":
+        with pytest.raises(ValueError, match="^unsupported migration resource backend$"):
+            resource.PosixLease(tmp_path)
+        return
     (tmp_path / "manifest.json").write_bytes(b"{}")
     with resource.PosixLease(tmp_path) as lease:
         assert lease.read("manifest.json") == b"{}"
