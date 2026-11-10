@@ -44,6 +44,7 @@
 - **events:** match grant attestation to declared table columns ([8d8396d35d5c](https://github.com/maxxab/modkit-events/commit/8d8396d35d5cb8977b93cfcf3d1a5ac8d29c934c))
 - **events:** group CASE expressions in grant attestation conditions ([99cedcd4f693](https://github.com/maxxab/modkit-events/commit/99cedcd4f6931d863ac33467c282edff18814ec5))
 - **types:** describe validated resource and lifecycle values precisely ([25859258681d](https://github.com/maxxab/modkit-events/commit/25859258681de80f256832ef2c35a021ea42fdd7))
+- **packaging:** preserve migration bytes on Windows checkouts ([4b832a69bd9f](https://github.com/maxxab/modkit-events/commit/4b832a69bd9f2e101febc14803bebc9c399b4079))
 
 ### Documentation
 
