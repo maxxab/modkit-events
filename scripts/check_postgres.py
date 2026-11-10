@@ -85,7 +85,7 @@ def connection_options(login):
     }
 
 
-def validate_target(row, roles, schemas):
+def validate_target(row, roles, schemas, objects):
     if not (
         len(row) == 4
         and type(row[0]) is int
@@ -93,6 +93,7 @@ def validate_target(row, roles, schemas):
         and row[1:] == (DATABASE, "modkit_ci_bootstrap", "modkit_ci_bootstrap")
         and roles == ["modkit_ci_bootstrap"]
         and schemas == []
+        and objects == []
     ):
         raise ValueError("fresh synthetic PostgreSQL 17 target required")
 
@@ -128,7 +129,13 @@ def bootstrap(psycopg):
                 "SELECT nspname FROM pg_namespace WHERE nspname !~ '^pg_' AND nspname NOT IN ('public','information_schema') ORDER BY nspname"
             )
         ]
-        validate_target(row, roles, schemas)
+        objects = connection.execute(
+            "SELECT 'relation',relname::text FROM pg_class WHERE relnamespace='public'::regnamespace "
+            "UNION ALL SELECT 'function',proname::text FROM pg_proc WHERE pronamespace='public'::regnamespace "
+            "UNION ALL SELECT 'type',typname::text FROM pg_type WHERE typnamespace='public'::regnamespace "
+            "ORDER BY 1,2"
+        ).fetchall()
+        validate_target(row, roles, schemas, objects)
         with connection.transaction():
             connection.execute("REVOKE ALL ON DATABASE modkit_events_ci FROM PUBLIC")
             for login, role in LOGIN_ROLES.items():

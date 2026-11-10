@@ -63,18 +63,18 @@ def test_connection_target_cannot_be_selected_by_caller():
 def test_server_preflight_rejects_wrong_or_used_targets():
     module = load_script()
     row = (171100, "modkit_events_ci", "modkit_ci_bootstrap", "modkit_ci_bootstrap")
-    module.validate_target(row, ["modkit_ci_bootstrap"], [])
+    module.validate_target(row, ["modkit_ci_bootstrap"], [], [])
     for index, changed in enumerate((160000, "existing_app", "owner", "owner")):
         bad = list(row)
         bad[index] = changed
         with pytest.raises(ValueError, match="fresh synthetic PostgreSQL 17"):
-            module.validate_target(tuple(bad), ["modkit_ci_bootstrap"], [])
+            module.validate_target(tuple(bad), ["modkit_ci_bootstrap"], [], [])
     for roles, schemas in (
         (["modkit_ci_bootstrap", "existing_user"], []),
         (["modkit_ci_bootstrap"], ["existing_app"]),
     ):
         with pytest.raises(ValueError, match="fresh synthetic PostgreSQL 17"):
-            module.validate_target(row, roles, schemas)
+            module.validate_target(row, roles, schemas, [])
 
 
 def test_execute_matrix_keeps_private_and_worker_only_overload_closed():
@@ -112,3 +112,21 @@ def test_main_refuses_before_package_or_driver_import(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", guarded_import)
     with pytest.raises(ValueError, match="synthetic GitHub CI"):
         module.main()
+
+
+def test_existing_public_objects_are_rejected_before_bootstrap():
+    import inspect
+
+    module = load_script()
+    assert "objects" in inspect.signature(module.validate_target).parameters, (
+        "target guard must inspect objects even in the default public schema"
+    )
+    row = (171100, "modkit_events_ci", "modkit_ci_bootstrap", "modkit_ci_bootstrap")
+    module.validate_target(row, ["modkit_ci_bootstrap"], [], [])
+    for objects in (
+        [("relation", "public.existing_table")],
+        [("function", "public.existing_function")],
+        [("type", "public.existing_enum")],
+    ):
+        with pytest.raises(ValueError, match="fresh synthetic PostgreSQL 17"):
+            module.validate_target(row, ["modkit_ci_bootstrap"], [], objects)
