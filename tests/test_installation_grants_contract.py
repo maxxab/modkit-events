@@ -273,6 +273,23 @@ def test_json_inventory_matches_all_frozen_initial_bodies_and_abis():
         assert item["input_types"] == [t for _, t in params]
         assert item["definer"] == ("SECURITY DEFINER" in options)
         assert item["setof"] == returns.startswith("TABLE")
+        # PostgreSQL stores a single TABLE output's own type in prorettype;
+        # only multiple output fields imply RECORD. This is an ABI oracle,
+        # not a substitute for executing the grants against PostgreSQL.
+        # See interpret_function_parameter_list in PostgreSQL functioncmds.c.
+        if returns.startswith("TABLE"):
+            outputs = re.findall(r"(\w+)\s+((?:pg_catalog|modkit_events)\.\w+(?:\[\])?)", returns)
+            assert outputs, signature
+            expected_return = outputs[0][1] if len(outputs) == 1 else "pg_catalog.record"
+            assert item["returns"] == expected_return, signature
+            assert item["all_types"] == [wire for _, wire in params + outputs], signature
+            assert item["names"] == [name for name, _ in params + outputs], signature
+            assert item["modes"] == ["i"] * len(params) + ["t"] * len(outputs), signature
+        else:
+            assert item["returns"] == returns.strip(), signature
+            assert item["all_types"] is None, signature
+            assert item["names"] == ([name for name, _ in params] or None), signature
+            assert item["modes"] is None, signature
     assert "SELECT x.*,n FROM" not in grants, "duplicate ordinality field in column loop"
 
 
