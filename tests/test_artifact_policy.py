@@ -89,6 +89,7 @@ EXPECTED_SUPPORT = """
 examples/sample_app.py
 scripts/artifact_policy.py
 scripts/check_installation.py
+scripts/check_postgres.py
 scripts/check_wheel.py
 scripts/release_verify.py
 tests/sql_specs/binary_scope_vectors.sql
@@ -191,6 +192,7 @@ tests/test_e31_held_resolution_sql.py
 tests/test_e32_uncertain_settlement_sql.py
 tests/test_fenced_failure_sql.py
 tests/test_installation_grants_contract.py
+tests/test_postgres_ci.py
 tests/test_native_acquisition_sql.py
 tests/test_native_execution_completion_codec.py
 tests/test_native_execution_completion_contract.py
