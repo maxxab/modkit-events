@@ -1,0 +1,92 @@
+# PROPOSAL ONLY: NOT PUBLISHED OR EXECUTED.
+name: Proposed Events native E14 cleanup
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: events-e14-close-v1
+  cancel-in-progress: false
+jobs:
+  events-e14-close-v1:
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.11-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+        env:
+          POSTGRES_USER: modkit_ci_bootstrap
+          POSTGRES_DB: modkit_events_ci
+          POSTGRES_PASSWORD: modkit-ci-public-fixture-only
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --encoding=UTF8 --locale=C
+        ports: ['127.0.0.1:5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U modkit_ci_bootstrap -d modkit_events_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      MODKIT_POSTGRES_TEST: events-installation-v1
+      MODKIT_NATIVE_PACKET: events-e14-close-v1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: packet
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: be8a722ee650d6f21a29ec32dd4c77213328038c
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.5'
+      - name: Verify reviewed bytes and record service identity
+        env:
+          SERVICE_ID: ${{ job.services.postgres.id }}
+          PACKET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate rev-parse HEAD)" = be8a722ee650d6f21a29ec32dd4c77213328038c
+          echo "5716e70441de7e47d3d09bc61b90be13bea3c03f1966c066f6d04ed8fae20db9  candidate/scripts/check_postgres.py" | sha256sum -c -
+          echo "b03e67c11f98733a296d3d9ea7f496e46300550c5d88d67b5aca512390c04a27  packet/scripts/check_native_smoke.py" | sha256sum -c -
+          printf 'run=%s job=%s packet=%s service=%s\n' "$GITHUB_RUN_ID" "$GITHUB_JOB" "$PACKET_SHA" "$SERVICE_ID"
+          docker inspect --format '{{.Id}} {{.Config.Image}} {{json .NetworkSettings.Ports}}' "$SERVICE_ID"
+      - name: Build and audit fixed candidate
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          python -m pip install build==1.6.1 hatchling==1.33.0
+          python -m build --wheel --no-isolation --outdir dist
+          echo "e55e6402d517d50da3d898fea10eb54124b90414263ce015c94726a1f38494d4  dist/modkit_events-0.2.0-py3-none-any.whl" | sha256sum -c -
+          python -c "import sys;sys.path.insert(0,'scripts');from pathlib import Path;from release_verify import audit;audit(Path('dist/modkit_events-0.2.0-py3-none-any.whl'),'modkit-events','0.2.0')"
+      - name: Install in new outside-checkout environment
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/events-e14-close-v1"
+          mkdir "$STAGE"
+          python -m venv "$STAGE/venv"
+          "$STAGE/venv/bin/python" -m pip install --no-deps candidate/dist/modkit_events-0.2.0-py3-none-any.whl
+          "$STAGE/venv/bin/python" -m pip install 'psycopg[binary]==3.3.8'
+          cp candidate/scripts/check_postgres.py "$STAGE/check_postgres.py"
+          cp packet/scripts/check_native_smoke.py "$STAGE/native_smoke.py"
+      - name: Qualify this fresh disposable fixture
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/events-e14-close-v1"
+          ./venv/bin/python -I -B check_postgres.py
+      - name: Single native transport and managed-close attempt
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/events-e14-close-v1"
+          ./venv/bin/python -I -B native_smoke.py
+      - name: Record terminal job state before Actions service teardown
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          printf 'job_status=%s service=%s; normal Actions teardown is not managed-close evidence\n' "$JOB_STATUS" "$SERVICE_ID"
+# No custom cleanup, force deletion, retry, artifacts or deployment.
