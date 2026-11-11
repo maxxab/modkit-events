@@ -51,7 +51,7 @@ jobs:
           set -euo pipefail
           test "$(git -C candidate rev-parse HEAD)" = be8a722ee650d6f21a29ec32dd4c77213328038c
           echo "5716e70441de7e47d3d09bc61b90be13bea3c03f1966c066f6d04ed8fae20db9  candidate/scripts/check_postgres.py" | sha256sum -c -
-          echo "b03e67c11f98733a296d3d9ea7f496e46300550c5d88d67b5aca512390c04a27  packet/scripts/check_native_smoke.py" | sha256sum -c -
+          echo "f2fd9d5cb00275db120997c5925ecdccfbe32c4bfd119c412a879a1102dd2ac7  packet/scripts/check_native_smoke.py" | sha256sum -c -
           printf 'run=%s job=%s packet=%s service=%s\n' "$GITHUB_RUN_ID" "$GITHUB_JOB" "$PACKET_SHA" "$SERVICE_ID"
           docker inspect --format '{{.Id}} {{.Config.Image}} {{json .NetworkSettings.Ports}}' "$SERVICE_ID"
       - name: Build and audit fixed candidate
