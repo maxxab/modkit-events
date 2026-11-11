@@ -71,6 +71,7 @@
 - **qualification:** record passing cloud package and Redis gates ([f1bb2b771f98](https://github.com/maxxab/modkit-events/commit/f1bb2b771f986a7f49f5ba44950e739f5e35b407))
 - **qualification:** record corrected installation ABI evidence ([e1bbde2dd2e6](https://github.com/maxxab/modkit-events/commit/e1bbde2dd2e6232fdc9f43a84dfc6392c65dc97a))
 - **qualification:** record verified PostgreSQL installation checks ([54adbffbe1de](https://github.com/maxxab/modkit-events/commit/54adbffbe1de29043ffaedd4e111cccde930929f))
+- **qualification:** reconcile published Events and Workers gates ([575ae83e0a66](https://github.com/maxxab/modkit-events/commit/575ae83e0a66d1c2fd1f04ba6e454cdca681f09f))
 
 ### Testing
 
