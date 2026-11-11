@@ -67,3 +67,22 @@ def test_retry_bounds():
     for kwargs in [{"max_attempts": 0}, {"base_delay": -1}, {"max_delay": math.inf}]:
         with pytest.raises(ValueError):
             RetryPolicy(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "base_delay, attempt, expected",
+    [
+        (2.0**-1022, 1025, 4.0),
+        (2.0**-1022, 2000, 60.0),
+        (math.ulp(0.0), 1075, 1.0),
+        (math.ulp(0.0), 1081, 60.0),
+        (math.ulp(0.0), 10**100, 60.0),
+    ],
+)
+def test_retry_tiny_base_keeps_growing_until_the_cap(base_delay, attempt, expected):
+    policy = RetryPolicy(base_delay=base_delay, max_delay=60.0)
+    assert policy.delay(attempt) == expected
+
+
+def test_retry_zero_base_stays_zero_for_an_arbitrarily_large_attempt():
+    assert RetryPolicy(base_delay=0).delay(10**100) == 0
