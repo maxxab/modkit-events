@@ -20,8 +20,10 @@
 - verify package and Redis integration across supported runtimes ([f59bea38aae8](https://github.com/maxxab/modkit-events/commit/f59bea38aae8082d9038fd35196e953fad46c577))
 - pin current v7 checkout and Python setup actions ([d98a979f3f22](https://github.com/maxxab/modkit-events/commit/d98a979f3f228ce9c1cdf82bb9021e6b96fc5fdd))
 - publish tested releases with trusted identity ([d0cbd54c5c9b](https://github.com/maxxab/modkit-events/commit/d0cbd54c5c9b04df96c420ecae9c71cc4ed8e521))
+- **native:** add manual isolated transport cleanup qualification ([c2685876e615](https://github.com/maxxab/modkit-events/commit/c2685876e615950bda53613f2ac6b6132f9a5196))
 
 ### Maintenance
 
 - ignore local build and environment files ([c820ab5a6097](https://github.com/maxxab/modkit-events/commit/c820ab5a6097c0bbb738b05df09ac23742d4d346))
 - keep duplicate generated workflow local ([fe1779f1c761](https://github.com/maxxab/modkit-events/commit/fe1779f1c76131fb6851fd7769e0188ac3de6a75))
+- **native:** format reviewed smoke runner ([a7d5d6e942db](https://github.com/maxxab/modkit-events/commit/a7d5d6e942dbba3a3b7796c9cf02f36979acefc1))
