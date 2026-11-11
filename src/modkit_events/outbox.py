@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
+from ._failure_reporting import add_failure_note, error_text
 from .claims import OwnershipLost, positive_seconds
 from .models import Event
 from .protocols import Publisher
@@ -71,11 +72,14 @@ class OutboxPublisher:
                 try:
                     await self.store.fail(claim, "cancelled", 0, self.retry.max_attempts)
                 except BaseException as cleanup:
-                    original.add_note(f"Outbox cleanup failed: {type(cleanup).__name__}: {cleanup}")
+                    add_failure_note(original, "Outbox cleanup failed", cleanup)
                 raise
             except Exception as error:
                 if not await self.store.fail(
-                    claim, str(error), self.retry.delay(claim.attempt), self.retry.max_attempts
+                    claim,
+                    error_text(error),
+                    self.retry.delay(claim.attempt),
+                    self.retry.max_attempts,
                 ):
                     raise OwnershipLost("Outbox failure lost ownership") from error
                 results.append("dead" if claim.attempt >= self.retry.max_attempts else "retry")

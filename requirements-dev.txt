@@ -7,3 +7,5 @@ mypy==1.20.2
 SQLAlchemy[asyncio]==2.1.6
 aiosqlite==0.22.1
 redis==8.1.0
+pydantic==2.14.3
+psycopg[binary]==3.3.8

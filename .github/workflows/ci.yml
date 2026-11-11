@@ -49,7 +49,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ['3.12', '3.13', '3.14', '3.15']
+        include:
+          # Exact finite recovery profiles supplement, not replace, the broad matrix.
+          - os: ubuntu-22.04
+            python: '3.12.3'
+            recovery-profile: '1'
+          - os: ubuntu-22.04
+            python: '3.13.5'
+            recovery-profile: '1'
     runs-on: ${{ matrix.os }}
+    env:
+      MODKIT_CI_RECOVERY_PROFILE: ${{ matrix.recovery-profile }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
@@ -59,7 +69,12 @@ jobs:
       - run: python -m pytest -q
       - run: python -m ruff check src tests examples scripts
       - run: python -m ruff format --check src tests examples scripts
-      - run: python -m mypy src/modkit_events --ignore-missing-imports
+      - name: Check persistence boundary consumer types
+        run: >-
+          python -m mypy src/modkit_events/persistence/errors.py
+          tests/typecheck_persistence_boundaries.py
+          --follow-imports=silent --warn-unused-ignores
+      - run: python -m mypy src/modkit_events --ignore-missing-imports --warn-unused-ignores
       - run: python -m build
       - run: python -m twine check dist/*
       - name: Installed wheel
@@ -87,10 +102,75 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q tests/test_redis.py
       - run: python -m build
-      - run: python scripts/check_wheel.py dist/modkit_events-0.1.0-py3-none-any.whl --require-redis
+      - run: python scripts/check_wheel.py dist/*.whl --require-redis
       - name: Rebuild sdist and verify installed adapters
         run: |
           mkdir sdist-check
-          tar -xzf dist/modkit_events-0.1.0.tar.gz -C sdist-check
-          python -m build --wheel sdist-check/modkit_events-0.1.0 --outdir sdist-wheels
-          python sdist-check/modkit_events-0.1.0/scripts/check_wheel.py sdist-wheels/modkit_events-0.1.0-py3-none-any.whl --require-redis
+          python - <<'PY'
+          import sys, tarfile, tomllib
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from release_verify import audit
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          archive = Path("dist") / ("modkit_events-" + version + ".tar.gz")
+          audit(archive, "modkit-events", version)
+          with tarfile.open(archive) as source:
+              source.extractall("sdist-check", filter="data")
+          PY
+          python -m build --wheel sdist-check/modkit_events-* --outdir sdist-wheels
+          python sdist-check/modkit_events-*/scripts/check_wheel.py sdist-wheels/*.whl --require-redis
+
+  postgres-installation:
+    name: Fresh PostgreSQL 17 installation and ACL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        # Official 17.11-bookworm image, immutable multi-platform manifest.
+        image: postgres:17.11-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+        env:
+          POSTGRES_USER: modkit_ci_bootstrap
+          POSTGRES_DB: modkit_events_ci
+          # Public disposable fixture value, never a real account credential.
+          POSTGRES_PASSWORD: modkit-ci-public-fixture-only
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --encoding=UTF8 --locale=C
+        ports: ['127.0.0.1:5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U modkit_ci_bootstrap -d modkit_events_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      MODKIT_POSTGRES_TEST: events-installation-v1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.5'
+      - name: Build and audit the current wheel
+        run: |
+          python -m pip install build==1.6.1
+          python -m build --wheel
+          python - <<'PY_AUDIT'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from release_verify import audit
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1
+          audit(wheels[0], "modkit-events", "0.2.0")
+          PY_AUDIT
+      - name: Check a fresh outside-checkout installed package
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/events-postgres-ci"
+          mkdir "$STAGE"
+          python -m venv "$STAGE/venv"
+          "$STAGE/venv/bin/python" -m pip install --no-deps dist/*.whl
+          "$STAGE/venv/bin/python" -m pip install 'psycopg[binary]==3.3.8'
+          cp scripts/check_postgres.py "$STAGE/check_postgres.py"
+          cd "$STAGE"
+          "$STAGE/venv/bin/python" -I -B check_postgres.py

@@ -2,6 +2,7 @@
 
 from typing import Literal
 
+from ._failure_reporting import add_failure_note
 from .claims import ClaimStore, OwnershipLost, validate_key
 from .dispatch import Dispatcher
 from .models import Event
@@ -27,9 +28,9 @@ class Consumer:
             try:
                 released = await self.store.release(claim)
                 if not released:
-                    original.add_note("Claim release lost ownership")
+                    add_failure_note(original, "Claim release lost ownership")
             except BaseException as cleanup:
-                original.add_note(f"Claim cleanup failed: {type(cleanup).__name__}: {cleanup}")
+                add_failure_note(original, "Claim cleanup failed", cleanup)
             raise
         if not await self.store.complete(claim):
             raise OwnershipLost("Handler finished after claim ownership was lost")

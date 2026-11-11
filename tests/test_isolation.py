@@ -2,7 +2,7 @@ import subprocess
 import sys
 
 
-def test_public_api_without_adapter_imports():
+def test_public_api_without_adapter_imports(tmp_path):
     code = """
 import sys
 class Block:
@@ -15,12 +15,23 @@ for name in m.__all__:
     assert getattr(m, name) is not None
 assert m.JsonCodec().decode(m.JsonCodec().encode(m.Event('1', 'a', {}))).event_id == '1'
 """
-    # Parent pytest's pythonpath setting is not inherited by subprocesses.
-    import os
+    # Select this actual product origin explicitly, with no environment/site startup.
     from pathlib import Path
 
     import modkit_events
 
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(modkit_events.__file__).parents[1])
-    subprocess.run([sys.executable, "-c", code], env=env, check=True)
+    product = Path(modkit_events.__file__).parents[1]
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-X",
+            "pycache_prefix=" + str(tmp_path / "unused-bytecode"),
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]);\n" + code,
+            str(product),
+        ],
+        check=True,
+    )

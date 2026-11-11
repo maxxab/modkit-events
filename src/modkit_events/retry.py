@@ -26,8 +26,7 @@ class RetryPolicy:
             raise ValueError("attempt must be positive")
         if self.base_delay == 0:
             return 0
-        exponent = min(attempt - 1, 1023)
         try:
-            return min(self.max_delay, math.ldexp(self.base_delay, exponent))
+            return min(self.max_delay, math.ldexp(self.base_delay, attempt - 1))
         except OverflowError:
             return self.max_delay

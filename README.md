@@ -16,6 +16,15 @@ pip install 'modkit-events[redis]'
 pip install 'modkit-events[sqlalchemy]' aiosqlite
 ```
 
+`modkit-events` works independently, with or without `modkit-workers` installed.
+These are separate, generic packages for any application. The dependency is
+one-way: Workers requires Events; Events never requires Workers, including for
+its supported optional adapters, default tests and Events-only migration path.
+The reference application is not a package dependency.
+Workers owns its consumer integration tests. Events also has explicitly selected
+Workers companion tests; its default tests remain Workers-independent. Native
+PostgreSQL migrations and adapters remain unqualified for release.
+
 The base package has no runtime dependencies. Adapters import only when explicitly
 requested. SQLAlchemy currently supports **SQLite 3.35+ only**; other dialects
 are rejected rather than claiming untested locking semantics. Redis requires a
@@ -189,6 +198,127 @@ republish. Choose a lease longer than normal operation and still design for that
 crash window. Lease expiry during publish can overlap another owner. There is no
 cross-broker/database transaction and no implicit lease-renewal service.
 
+## Native PostgreSQL transport status
+
+**Bounded W01/W02/W03/W04 native, helper and W05 dependency checks passed; full
+native qualification remains incomplete (NOT_READY).** The W01 submission and W02 status
+extension has passed independent source review and focused source validation. It uses the existing Events
+controller and the caller's original READ COMMITTED root, with fixed statement
+profiles, bounded request/context retention, and fully validated typed results.
+It adds no second controller or Events dependency on Workers. This does not
+qualify the W05 native profile or a generic native transport.
+
+Workers selects the extension through its `prepare_submit` and `prepare_read_job`
+wrappers. Admission, result reservation, execution and release remain explicit.
+`read_result` borrows a still-charged value; the caller must end all borrowed
+references before releasing the result. Successful statement execution is not
+commit acknowledgement.
+
+The W03 complete-page listing extension has passed independent source review
+and bounded native qualification, including its private five-argument SQL
+overload.
+Workers `prepare_list_jobs` defaults `max_page_payload_bytes` to 16 MiB across 14
+large BYTEA occurrences, counting repeated fields separately. Explicit budgets
+from 1 through 3,758,096,384 bytes preserve larger complete pages and limit 1..256.
+The four-argument business request stays unchanged. After admission, use the
+common `result_capacity(ticket, execution_ledger=...)` quote before reservation.
+At the default budget and limit 256, the conservative result charge is 62,052,884
+bytes on the measured Python interpreter, plus request and other controller
+backing; it is not a process-memory limit. Oversized pages fail entirely without
+truncation or retry. Received `PZ013` retains the existing HELD/UNKNOWN recovery
+rules. The private bounded SQL overload must be installed separately; there is
+no fallback to unbounded SQL or automatic installation.
+
+Accepted W03 checks include empty and 256-row full-record pages, non-null
+cursors, exact-budget success and the original late `PZ013` without a returned
+prefix. Catalog and access-control checks passed. A concurrent lawful E04 claim
+preserved the complete historical two-row snapshot; cancellation on the original
+connection preserved `57014`, exception identity and HELD/UNKNOWN without refund.
+Owner-only rollback controls covered projection caps and sentinels, not native
+execution against faulted SQL definitions.
+
+The original W03 run failed when its Docker observer could not start. A separate
+diagnostic reproduced Docker initialization failing under the inherited native
+address-space limit. A corrected remaining-only continuation passed snapshot
+and cancellation checks without replaying successful cases; the original failure
+and missing original stderr remain preserved. Bounded query-plan and complete
+original-window server-log checks passed. This does not qualify a genuine
+resolved lifecycle, direct wire capture, exact total memory/RSS, an SLA or all
+possible sensitive log values.
+
+A separately accepted disposition confirms graceful shutdown and non-force
+removal of the W03 fixture, with container and owned socket directory absence
+verified.
+
+Workers `prepare_find_jobs` adds W04 identity lookup on the same caller-owned
+root. It retains seven lookup parameters and one comparison-only admission
+context, then returns a complete NEW/MATCH/CONFLICT observation containing zero
+to two candidates. A direct-ID inbox collision is a valid conflict with no job
+half; lookup does not submit or acquire work. The existing pure find API is
+unchanged.
+
+Focused W04 native checks passed seven cases covering absent lookup, direct and
+key matches, immutable-input conflict, two-job conflict, genuine inbox collision
+and a mixed inbox/job family, checking all 72 canonical fields. Caller-root and
+staged visibility, explicit rollback and genuine `PZ005` exception identity with
+HELD/UNKNOWN accounting passed. The same run completed graceful shutdown and
+non-force fixture removal. On the measured interpreter, fixed request/result
+reservations are 3,156,870 and 119,667,132 bytes: about 117.134 MiB per operation,
+or 937.073 MiB for eight concurrent operations, before other controller backing.
+Configure ledger capacity and concurrency accordingly; these are logical
+reservations, not allocation or RSS measurements. Borrowed references remain
+caller-managed and must be dropped before result release.
+
+W04 positive resolved-lifecycle, terminal, concurrency, cancellation and
+maximum-cell native cases were not run in this focused proof. Source controls
+cover additional malformed-family, full-resolution and error paths; they are
+not database qualification. Broader native/ORM and release readiness remain
+NOT_READY.
+
+The first real W01/W02 qualification attempt did **not** pass. Initial submission,
+a complete protected-record read and a missing read returned before an identical
+duplicate submission hit the 20-second statement timeout with a 256 KiB payload
+string. The server trace reached the existing `_json_string_chunks` path through
+E15 during W01. That failed attempt and its read-only empty aftermath remain
+historical evidence, not a passed transaction test or cleanup/refund receipt.
+
+The [bounded replay materialization fix](docs/sql-candidates/json-replay-materialization/README.md)
+retains one size-checked bytea value in `_json_to_j` before scanning. At the exact
+fix snapshot, a fresh independently reviewed invocation of the unchanged native
+test passed its normal, key-conflict and ID-conflict phases with the same 256 KiB
+payload string, 20-second statement timeout and one-CPU limit. This includes
+identical duplicate submission, caller rollback and commit, typed reads, tested
+result lifetimes and client diagnostic checks. It closes the observed regression
+for this invocation and profile; it is not a latency, throughput or memory
+guarantee. Closing a held conflict connection is not a managed cleanup/refund
+receipt.
+
+That continuation later stopped at a fixture observation-permission error.
+This attempt and an earlier incorrect integer-oracle attempt remain historical
+failures; completed native phases were preserved without replay.
+
+A separately reviewed continuation passed the corrected 43-case helper corpus
+and the targeted current-helper W05 SQL dependency checks. W05 passed exact
+named-value and claim/history comparisons, both full transactional rollback
+checks, and the expected late-corrupt-replay error with evidence of the earlier
+real claim allocation. This is not W05 native binary-profile or broad
+concurrency qualification.
+
+Final observations matched the expected committed baseline, with no prepared
+transactions or other database clients. The bounded 250-line server-log privacy
+check, containment and input-pin checks passed. These checks do not certify all
+logs. A separate disposition receipt confirms clean shutdown and non-force
+removal of the isolated fixture, with container and owned socket absence verified.
+
+Existing E14/E28 qualification remains separate. Production installation, final
+grants/manifests, installed artifacts, other drivers/platforms, broader native
+and scaling qualification, and release readiness remain unqualified.
+
+Companion source checks require `MODKIT_EVENTS_WORKERS_TESTS=1` and an installed
+Workers package or an explicit Workers source `PYTHONPATH`. Unselected companion
+cases skip; selected missing or broken imports fail. Events-only checks remain
+active. Source tests do not substitute for the remaining real-driver proof.
+
 ## Development and verification
 
 ```sh
@@ -199,8 +329,23 @@ python -m ruff format --check src tests examples scripts
 python -m mypy src/modkit_events --ignore-missing-imports
 python -m build
 python -m twine check dist/*
-python scripts/check_wheel.py dist/modkit_events-0.1.0-py3-none-any.whl
+python scripts/check_wheel.py dist/modkit_events-0.2.0-py3-none-any.whl
 ```
+
+Events 0.2.0 is an unpublished local candidate. The reviewed installation
+checkpoint passed base-package wheel/sdist, offline resolver, installed-origin
+and ZIP-resource checks. The command above is not evidence that the current
+source revision passed every release check. Native installation, optional drivers,
+service recovery and platform qualification remain open; see the
+[qualification record](docs/qualification/2026-11-09.md).
+
+The broad CI matrix tests portable behavior on current Python 3.12–3.15 across
+Linux, Windows and macOS. Recovery acceptance uses the deliberately finite
+Linux CPython 3.12.3 and 3.13.5 profiles in two additional mandatory package lanes.
+Other hosts run profile-refusal checks; profile-dependent acceptance tests report
+explicit skips. POSIX filesystem/durability controls run only on POSIX hosts,
+while in-memory ZIP cleanup tests remain portable. These source checks do not
+qualify native PostgreSQL installation or live runtime behavior.
 
 Real Redis tests require a disposable standalone server. Set `MODKIT_REDIS_URL`
 and `MODKIT_REQUIRE_REDIS=1` to make missing service configuration a failure.
@@ -213,3 +358,20 @@ real SQLite and (when configured) Redis tests. Keep hosted CI green for the exac
 release SHA before publication.
 
 The MIT license retains the original source copyright notice.
+
+
+## Explicit PostgreSQL closure candidate
+
+This candidate includes initial/grants descriptors and a separately pinned
+owner-only six-bind receipt template. The inert migrations.read_owner_receipt
+helper always takes the verified Events Migration, even when retrieving the
+shared generic template for separately validated Workers identity. It enforces
+a4096-byte bound and never executes SQL or finalizes transactions.
+
+See [installation responsibilities](docs/installation.md). Matching resources or
+E33 rows do not qualify installation, ACL integrity or business authority.
+Candidates remain **not installation-ready** pending restricted-role native
+qualification and final release checks. Events 0.2.0 satisfies Workers 0.1.0's
+Events>=0.2,<0.3 requirement in the reviewed base-only resolver lanes. Optional
+native/service dependencies require separate qualification; dependency-ignoring
+installations or checkout imports are not installed-pair evidence.

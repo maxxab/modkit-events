@@ -1,0 +1,44 @@
+{
+  "status": "SOURCE_INTEGRATED_NOT_READY_FOR_INSTALLATION_OR_RELEASE",
+  "scope": "E30 and Events-owned listing indexes integrated into the package initial migration; prior bounded PostgreSQL evidence retained.",
+  "source_file": "e30.sql",
+  "source_sha256": "4d58bd96fb715f7660b45f04765021db3b2a1e1fb4bb64814e700dbd1be13c9f",
+  "baseline_sha256": "6cf0c7d1fb6baaccf98b5aaf0e3ed15c55c12941c4e73d45d083d948ec9a5534",
+  "source_tests": {
+    "red": "10 failed because the E30 candidate did not exist.",
+    "green": "10 passed."
+  },
+  "full_suite": "Attempted; collection error: tests/test_contracts_pydantic.py requires unavailable pydantic.",
+  "base_suite": "187 passed, 30 skipped, 266 subtests passed; optional Pydantic module explicitly excluded.",
+  "independent_review": "Source accepted with no correctness findings. Independent focused run: 12 passed, 69 deselected, covering 10 SQL source guards and two existing E30 decoder/bounded-demand controls. No database execution.",
+  "runtime": {
+    "server": "PostgreSQL 18.1 (Debian)",
+    "behavior_returncode": 0,
+    "behavior_seconds": 7.610013253,
+    "behavior_input_sha256": "7ace6f0e952a152dc049e1231f1b4d95ac8e70a403f7553cba10f1dd2566c77f",
+    "behavior_test_sha256": "2e30c0176071f359dda5ee2770948fe10f26111845f8128a3fa37f4bb88f3243",
+    "isolation_returncode": 0,
+    "isolation_input_sha256": "f5f047a2bd812337cd94a3fb10ff2c2b226918c03205bf1d485e5b6e9005bd2d",
+    "isolation_test_sha256": "51bfa99a89f8bfdbd76671474eaf6282270df7247b274d2601303ac6e2176151",
+    "independent_review": "Saved input/output evidence accepted for bounded behavior, discovery plans, ACL and rollback checks.",
+    "cleanup": "Schema, fixture roles and other clients absent; fresh disposable container removed."
+  },
+  "limits": [
+    "Discovery SELECT plans only, not full E30 execution plans.",
+    "No actual job rows in the partial-index scenario; mixed-job W03 results remain unqualified.",
+    "Timestamp-dominant ordering across different timestamps and concurrent changes not exercised.",
+    "Structural inbox fixtures do not qualify admission or lifecycle.",
+    "Native transport, integrated grants/installations, complete migration qualification and package release remain NOT_READY."
+  ],
+  "integration": {
+    "resource": "src/modkit_events/persistence/sql/0001_initial.sql",
+    "sha256": "9b8c948b6abfc1b3c117a1adaa1b243d8bc7debdcc5ca41eaa6e0f1a791185ac",
+    "baseline_sha256": "6cf0c7d1fb6baaccf98b5aaf0e3ed15c55c12941c4e73d45d083d948ec9a5534",
+    "executable_sql": "Identical to the previously checked baseline plus e30.sql; broader baseline remains unqualified and only status comments changed.",
+    "tests": "tests/test_work_listing_sql.py",
+    "release": "NOT_READY: grants, manifest and remaining qualification are absent.",
+    "source_checks": "10 passed against the package resource; copied-test staging reproduced 10 missing-resource failures before using importlib.resources, then 10 passed.",
+    "base_suite": "197 passed, 30 skipped, 267 subtests passed; unavailable optional Pydantic module explicitly excluded.",
+    "full_suite": "Collection blocked by unavailable pydantic; no dependency installed."
+  }
+}
