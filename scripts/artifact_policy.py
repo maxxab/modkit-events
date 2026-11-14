@@ -207,6 +207,11 @@ tests/test_owner_receipt_resource.py
 tests/test_packaged_migrations.py
 tests/test_work_cancellation_sql.py
 tests/test_work_recovery_sql.py
+tests/test_dispatch_sql_source.py
+tests/test_public_canonical_caps.py
+tests/test_raw_columns.py
+tests/test_raw_empty_context.py
+tests/test_raw_metadata.py
 """.split()
 )
 
