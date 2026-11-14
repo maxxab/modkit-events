@@ -52,6 +52,8 @@
 - **ci:** refuse existing public database objects ([f2c2a1bd5efa](https://github.com/maxxab/modkit-events/commit/f2c2a1bd5efa5afca6e9f3f0006d61a1f083ea84))
 - **ci:** omit empty libpq service selection ([de5346f3bc0b](https://github.com/maxxab/modkit-events/commit/de5346f3bc0b09ed6c1ce28ef66eef5ad22ac504))
 - **retry:** preserve capped growth for tiny base delays ([a22849eaf96a](https://github.com/maxxab/modkit-events/commit/a22849eaf96aa3551d3db0e497606c041e35a0b2))
+- **events:** tighten selected raw validation contracts ([5d1f0bc49583](https://github.com/maxxab/modkit-events/commit/5d1f0bc495830fcf684209319ca6520cddcfe8d5))
+- **packaging:** allow reviewed test files in sdist ([2ca2e85cdf70](https://github.com/maxxab/modkit-events/commit/2ca2e85cdf70da4ef8124b7d90adc7257977f239))
 
 ### Documentation
 
