@@ -11,7 +11,7 @@ import pytest
 from modkit_events.persistence import bindings as B
 from modkit_events.persistence import managed_lifecycle as M
 from modkit_events.persistence import rows as R
-from modkit_events.persistence.catalog import get_statement
+from modkit_events.persistence.catalog import WireType, get_statement
 from modkit_events.persistence.errors import _ValidationReject
 from modkit_events.persistence.models import Fence
 
@@ -61,6 +61,25 @@ class FloatSubclass(float):
 
 class IntSubclass(int):
     pass
+
+
+@pytest.mark.parametrize("value", [0.0, -1.25, 3600.0])
+def test_raw_float8_scalar_retains_exact_finite_builtin_float(value):
+    assert B._scalar_raw(value, WireType.FLOAT8, False) is value
+
+
+@pytest.mark.parametrize(
+    "value", [1, True, FloatSubclass(1.0), float("nan"), float("inf"), -float("inf")]
+)
+def test_raw_float8_scalar_rejects_nonfinite_or_nonexact_values(value):
+    with pytest.raises(_ValidationReject):
+        B._scalar_raw(value, WireType.FLOAT8, False)
+
+
+@pytest.mark.parametrize("nullable", [None, 0, 1, "false"])
+def test_raw_float8_scalar_rejects_nonboolean_nullable_flag(nullable):
+    with pytest.raises(_ValidationReject):
+        B._scalar_raw(1.0, WireType.FLOAT8, nullable)
 
 
 @pytest.mark.parametrize(

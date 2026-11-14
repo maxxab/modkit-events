@@ -1071,6 +1071,8 @@ def _scalar_raw(value, wire_type, nullable):
     """Exact immutable raw scalar validation; unsupported kinds fail closed."""
     if type(wire_type) is not WireType or wire_type not in _RAW_SCALAR_TYPES:
         _reject_validation()
+    if type(nullable) is not bool:
+        _reject_validation()
     if wire_type is WireType.BYTEA and value is not None and type(value) is not bytes:
         _reject_validation()
     if wire_type is WireType.FLOAT8:
